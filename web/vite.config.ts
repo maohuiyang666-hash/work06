@@ -20,7 +20,7 @@ const alias: Record<string, string> = {
 const viteConfig = defineConfig((mode: ConfigEnv) => {
 	const env = loadEnv(mode.mode, process.cwd());
 	// 当Vite构建时，生成版本文件
-	generateVersionFile()
+	generateVersionFile(env)
 	return {
 		plugins: [vue(), /* vueJsx(), */ vueSetupExtend()],
 		root: process.cwd(),
@@ -65,6 +65,7 @@ const viteConfig = defineConfig((mode: ConfigEnv) => {
 			__VUE_I18N_FULL_INSTALL__: JSON.stringify(false),
 			__INTLIFY_PROD_DEVTOOLS__: JSON.stringify(false),
 			__VERSION__: JSON.stringify(process.env.npm_package_version),
+			__APP_ENV__: JSON.stringify(env.VITE_ENV || 'development'),
 		},
 	};
 });

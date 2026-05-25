@@ -49,10 +49,17 @@ export async function checkVersion() {
 	});
 }
 
-export function generateVersionFile() {
+export function generateVersionFile(env?: Record<string, string>) {
 	// 生成版本文件到public目录下version文件中
 	const package_version = META_ENV?.npm_package_version ?? process.env?.npm_package_version;
-
-	const version = `${package_version}.${new Date().getTime()}`;
-	fs.writeFileSync(`public/${VERSION_FILE_NAME}`, version);
+	// 包含环境标识，打包后可明确区分构建环境
+	const appEnv = env?.VITE_ENV || META_ENV?.VITE_ENV || 'development';
+	const timestamp = new Date().getTime();
+	const version = `${package_version}.${timestamp}`;
+	const versionInfo = JSON.stringify({
+		version,
+		env: appEnv,
+		timestamp,
+	});
+	fs.writeFileSync(`public/${VERSION_FILE_NAME}`, versionInfo);
 }

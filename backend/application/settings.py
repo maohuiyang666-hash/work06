@@ -146,14 +146,14 @@ USE_TZ = False
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.2/howto/static-files/
 
-STATIC_URL = "/static/"
+STATIC_URL = locals().get("STATIC_URL", "/static/")
 # # 设置django的静态文件目录
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, "static"),
 ]
 
-MEDIA_ROOT = "media"  # 项目下的目录
-MEDIA_URL = "/media/"  # 跟STATIC_URL类似，指定用户可以通过这个url找到文件
+MEDIA_ROOT = locals().get("MEDIA_ROOT", "media")  # 项目下的目录
+MEDIA_URL = locals().get("MEDIA_URL", "/media/")  # 跟STATIC_URL类似，指定用户可以通过这个url找到文件
 
 #添加以下代码以后就不用写{% load staticfiles %}，可以直接引用
 STATICFILES_FINDERS = (
@@ -168,8 +168,10 @@ STATICFILES_FINDERS = (
 # ******************* 跨域的配置 ******************* #
 # ================================================= #
 
-# 全部允许配置
-CORS_ORIGIN_ALLOW_ALL = True
+# 全部允许配置（各环境通过 conf/env.py 覆盖）
+CORS_ORIGIN_ALLOW_ALL = locals().get("CORS_ORIGIN_ALLOW_ALL", True)
+# 允许的跨域来源列表（当 CORS_ORIGIN_ALLOW_ALL=False 时生效）
+CORS_ALLOWED_ORIGINS = locals().get("CORS_ALLOWED_ORIGINS", [])
 # 允许cookie
 CORS_ALLOW_CREDENTIALS = True  # 指明在跨域访问中，后端是否支持对cookie的操作
 
@@ -177,19 +179,12 @@ CORS_ALLOW_CREDENTIALS = True  # 指明在跨域访问中，后端是否支持�
 # ********************* channels配置 ******************* #
 # ===================================================== #
 ASGI_APPLICATION = 'application.asgi.application'
-CHANNEL_LAYERS = {
+# CHANNEL_LAYERS 从环境配置中读取，默认使用内存通道
+CHANNEL_LAYERS = locals().get("CHANNEL_LAYERS", {
     "default": {
         "BACKEND": "channels.layers.InMemoryChannelLayer"
     }
-}
-# CHANNEL_LAYERS = {
-#     'default': {
-#         'BACKEND': 'channels_redis.core.RedisChannelLayer',
-#         'CONFIG': {
-#             "hosts": [('127.0.0.1', 6379)], #需修改
-#         },
-#     },
-# }
+})
 
 
 # ================================================= #

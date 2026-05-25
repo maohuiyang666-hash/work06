@@ -1,0 +1,267 @@
+diff --git a/backend/application/settings.py b/backend/application/settings.py
+index 71ed7d5..32d0566 100644
+--- a/backend/application/settings.py
++++ b/backend/application/settings.py
+@@ -146,14 +146,14 @@ USE_TZ = False
+ # Static files (CSS, JavaScript, Images)
+ # https://docs.djangoproject.com/en/3.2/howto/static-files/
+ 
+-STATIC_URL = "/static/"
++STATIC_URL = locals().get("STATIC_URL", "/static/")
+ # # 设置django的静态文件目录
+ STATICFILES_DIRS = [
+     os.path.join(BASE_DIR, "static"),
+ ]
+ 
+-MEDIA_ROOT = "media"  # 项目下的目录
+-MEDIA_URL = "/media/"  # 跟STATIC_URL类似，指定用户可以通过这个url找到文件
++MEDIA_ROOT = locals().get("MEDIA_ROOT", "media")  # 项目下的目录
++MEDIA_URL = locals().get("MEDIA_URL", "/media/")  # 跟STATIC_URL类似，指定用户可以通过这个url找到文件
+ 
+ #添加以下代码以后就不用写{% load staticfiles %}，可以直接引用
+ STATICFILES_FINDERS = (
+@@ -168,8 +168,10 @@ STATICFILES_FINDERS = (
+ # ******************* 跨域的配置 ******************* #
+ # ================================================= #
+ 
+-# 全部允许配置
+-CORS_ORIGIN_ALLOW_ALL = True
++# 全部允许配置（各环境通过 conf/env.py 覆盖）
++CORS_ORIGIN_ALLOW_ALL = locals().get("CORS_ORIGIN_ALLOW_ALL", True)
++# 允许的跨域来源列表（当 CORS_ORIGIN_ALLOW_ALL=False 时生效）
++CORS_ALLOWED_ORIGINS = locals().get("CORS_ALLOWED_ORIGINS", [])
+ # 允许cookie
+ CORS_ALLOW_CREDENTIALS = True  # 指明在跨域访问中，后端是否支持对cookie的操作
+ 
+@@ -177,19 +179,12 @@ CORS_ALLOW_CREDENTIALS = True  # 指明在跨域访问中，后端是否支持
+ # ********************* channels配置 ******************* #
+ # ===================================================== #
+ ASGI_APPLICATION = 'application.asgi.application'
+-CHANNEL_LAYERS = {
++# CHANNEL_LAYERS 从环境配置中读取，默认使用内存通道
++CHANNEL_LAYERS = locals().get("CHANNEL_LAYERS", {
+     "default": {
+         "BACKEND": "channels.layers.InMemoryChannelLayer"
+     }
+-}
+-# CHANNEL_LAYERS = {
+-#     'default': {
+-#         'BACKEND': 'channels_redis.core.RedisChannelLayer',
+-#         'CONFIG': {
+-#             "hosts": [('127.0.0.1', 6379)], #需修改
+-#         },
+-#     },
+-# }
++})
+ 
+ 
+ # ================================================= #
+diff --git a/web/.env b/web/.env
+index a77f485..e98efbb 100644
+--- a/web/.env
++++ b/web/.env
+@@ -1,8 +1,30 @@
+-# port 端口号
++# ================================================= #
++# ******************* 默认公共配置 ****************** #
++# ================================================= #
++# 注意：各环境的专属配置请修改对应的 .env.{env} 文件，此文件仅作为兜底默认值。
++# 开发、测试、生产环境的实际值在以下文件中定义：
++#   .env.development (dev)  / .env.test (test)  / .env.production (prod)
++
++# 环境标识（与后端 DJANGO_ENV 保持一致）
++VITE_ENV = 'development'
++
++# 开发服务器端口
+ VITE_PORT = 8080
++
++# API 接口地址
+ VITE_API_URL = 'http://127.0.0.1:8000'
+-# open 运行 npm run dev 时自动打开浏览器
++
++# WebSocket 地址
++VITE_WS_URL = ''
++
++# 运行 npm run dev 时自动打开浏览器
+ VITE_OPEN = false
+ 
+-# public path 配置线上环境路径（打包）、本地通过 http-server 访问时，请置空即可
++# public path 配置（打包）、本地通过 http-server 访问时，请置空即可
+ VITE_PUBLIC_PATH = /
++
++# 是否启用按钮权限
++VITE_PM_ENABLED = true
++
++# 应用标题后缀
++VITE_APP_TITLE = ''
+diff --git a/web/.env.development b/web/.env.development
+index fc47d19..0686de2 100644
+--- a/web/.env.development
++++ b/web/.env.development
+@@ -1,10 +1,26 @@
+-# 本地环境
+-ENV = 'development'
++# ================================================= #
++# ******************* 开发环境配置 ****************** #
++# ================================================= #
++# 环境标识（与后端 DJANGO_ENV 保持一致）
++VITE_ENV = 'development'
++
++# 开发服务器端口
+ VITE_PORT = 8080
++
++# 开发环境接口地址
+ VITE_API_URL = 'http://127.0.0.1:8000'
+-# open 运行 npm run dev 时自动打开浏览器
++
++# WebSocket 地址（为空则自动根据 VITE_API_URL 推导）
++VITE_WS_URL = ''
++
++# 运行 npm run dev 时自动打开浏览器
+ VITE_OPEN = false
+ 
++# public path 配置
++VITE_PUBLIC_PATH = /
+ 
+ # 是否启用按钮权限
+ VITE_PM_ENABLED = true
++
++# 应用标题后缀（开发环境，打包后标识）
++VITE_APP_TITLE = '【开发环境】'
+diff --git a/web/.env.local_prod b/web/.env.local_prod
+index dad4103..3fe3b04 100644
+--- a/web/.env.local_prod
++++ b/web/.env.local_prod
+@@ -1,11 +1,23 @@
+-# 线上环境
+-ENV = 'local_prod'
++# ================================================= #
++# *********** 本地模拟生产环境（local_prod）********** #
++# ================================================= #
++# 环境标识（与后端 DJANGO_ENV 保持一致）
++VITE_ENV = 'local_prod'
+ 
+-# 线上环境接口地址
++# 接口地址
+ VITE_API_URL = '/'
+ 
++# WebSocket 地址
++VITE_WS_URL = ''
++
+ # 是否启用按钮权限
+ VITE_PM_ENABLED = true
++
++# public path
+ VITE_PUBLIC_PATH = /web/
+-# dist目录
+-VITE_DIST_PATH =../backend/templates/web/
+\ No newline at end of file
++
++# dist 输出目录（后端模板目录）
++VITE_DIST_PATH = ../backend/templates/web/
++
++# 应用标题后缀
++VITE_APP_TITLE = ''
+\ No newline at end of file
+diff --git a/web/.env.production b/web/.env.production
+index 998aa5e..57f4579 100644
+--- a/web/.env.production
++++ b/web/.env.production
+@@ -1,8 +1,20 @@
+-# 线上环境
+-ENV = 'production'
++# ================================================= #
++# ******************* 生产环境配置 ****************** #
++# ================================================= #
++# 环境标识（与后端 DJANGO_ENV 保持一致）
++VITE_ENV = 'production'
+ 
+-# 线上环境接口地址
+-VITE_API_URL = '/api' # docker-compose部署不需要修改，nginx容器自动代理了这个地址
++# 线上环境接口地址（docker-compose部署时 nginx 自动代理此地址）
++VITE_API_URL = '/api'
++
++# WebSocket 地址
++VITE_WS_URL = ''
++
++# public path 配置
++VITE_PUBLIC_PATH = /
+ 
+ # 是否启用按钮权限
+ VITE_PM_ENABLED = true
++
++# 应用标题后缀（生产环境为空）
++VITE_APP_TITLE = ''
+diff --git a/web/package.json b/web/package.json
+index 113381b..9a1e532 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -6,6 +6,7 @@
+ 	"scripts": {
+ 		"dev": "vite --force",
+ 		"build:dev": "vite build --mode development",
++		"build:test": "vite build --mode test",
+ 		"build": "vite build",
+ 		"build:local": "vite build --mode local_prod",
+ 		"lint-fix": "eslint --fix --ext .js --ext .jsx --ext .vue src/",
+diff --git a/web/src/utils/baseUrl.ts b/web/src/utils/baseUrl.ts
+index 6b55c27..b23ec8f 100644
+--- a/web/src/utils/baseUrl.ts
++++ b/web/src/utils/baseUrl.ts
+@@ -46,7 +46,8 @@ export const getBaseURL = function (url: null | string = null, isHost: null | bo
+ };
+ 
+ export const getWsBaseURL = function () {
+-	let baseURL = import.meta.env.VITE_API_URL as any;
++	// 优先使用 VITE_WS_URL，为空则自动从 VITE_API_URL 推导
++	let baseURL = (import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL) as any;
+ 	let param = baseURL.split('/')[3] || '';
+ 	// @ts-ignore
+ 	if (pluginsAll && pluginsAll.indexOf('dvadmin3-tenants-web') !== -1 && (!param || baseURL.startsWith('/'))) {
+diff --git a/web/src/utils/upgrade.ts b/web/src/utils/upgrade.ts
+index 60c10f2..01eb98c 100644
+--- a/web/src/utils/upgrade.ts
++++ b/web/src/utils/upgrade.ts
+@@ -49,10 +49,17 @@ export async function checkVersion() {
+ 	});
+ }
+ 
+-export function generateVersionFile() {
++export function generateVersionFile(env?: Record<string, string>) {
+ 	// 生成版本文件到public目录下version文件中
+ 	const package_version = META_ENV?.npm_package_version ?? process.env?.npm_package_version;
+-
+-	const version = `${package_version}.${new Date().getTime()}`;
+-	fs.writeFileSync(`public/${VERSION_FILE_NAME}`, version);
++	// 包含环境标识，打包后可明确区分构建环境
++	const appEnv = env?.VITE_ENV || META_ENV?.VITE_ENV || 'development';
++	const timestamp = new Date().getTime();
++	const version = `${package_version}.${timestamp}`;
++	const versionInfo = JSON.stringify({
++		version,
++		env: appEnv,
++		timestamp,
++	});
++	fs.writeFileSync(`public/${VERSION_FILE_NAME}`, versionInfo);
+ }
+diff --git a/web/vite.config.ts b/web/vite.config.ts
+index 2681338..c9dfe38 100644
+--- a/web/vite.config.ts
++++ b/web/vite.config.ts
+@@ -20,7 +20,7 @@ const alias: Record<string, string> = {
+ const viteConfig = defineConfig((mode: ConfigEnv) => {
+ 	const env = loadEnv(mode.mode, process.cwd());
+ 	// 当Vite构建时，生成版本文件
+-	generateVersionFile()
++	generateVersionFile(env)
+ 	return {
+ 		plugins: [vue(), /* vueJsx(), */ vueSetupExtend()],
+ 		root: process.cwd(),
+@@ -65,6 +65,7 @@ const viteConfig = defineConfig((mode: ConfigEnv) => {
+ 			__VUE_I18N_FULL_INSTALL__: JSON.stringify(false),
+ 			__INTLIFY_PROD_DEVTOOLS__: JSON.stringify(false),
+ 			__VERSION__: JSON.stringify(process.env.npm_package_version),
++			__APP_ENV__: JSON.stringify(env.VITE_ENV || 'development'),
+ 		},
+ 	};
+ });
