@@ -5,8 +5,12 @@
 	"license": "MIT",
 	"scripts": {
 		"dev": "vite --force",
+		"dev:test": "vite --force --mode test",
+		"dev:prod": "vite --force --mode production",
 		"build:dev": "vite build --mode development",
+		"build:test": "vite build --mode test",
 		"build": "vite build",
+		"build:prod": "vite build --mode production",
 		"build:local": "vite build --mode local_prod",
 		"lint-fix": "eslint --fix --ext .js --ext .jsx --ext .vue src/",
 		"build:flowH5": "vite build --config flowH5.config.ts"
