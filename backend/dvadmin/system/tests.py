@@ -1,56 +1,220 @@
-from functools import wraps
+from types import SimpleNamespace
 
-from django.db.models import Func, F, OuterRef, Exists
 from django.test import TestCase
-import django
-import os
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "application.settings")
-django.setup()
-from dvadmin.system.models import Menu, RoleMenuPermission, RoleMenuButtonPermission, MenuButton
+from rest_framework.test import APIClient
+
+from dvadmin.system.models import (
+    Dept,
+    Menu,
+    MenuButton,
+    Role,
+    RoleMenuButtonPermission,
+    RoleMenuPermission,
+    Users,
+)
+from dvadmin.utils.filters import DataLevelPermissionsFilter
 
 
-import time
+class PermissionChainTests(TestCase):
+    menu_router_url = "/api/system/menu/web_router/"
+    button_permission_url = "/api/system/menu_button/menu_button_all_permission/"
+    dept_list_url = "/api/system/dept/"
 
-def timing_decorator(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        run_time = end_time - start_time
-        print(f"{func.__name__} ran in {run_time:.6f} seconds")
-        return result
-    return wrapper
+    def setUp(self):
+        self.root_dept = self.create_dept("总部", "permission-root")
+        self.user_dept = self.create_dept("研发部", "permission-rd", parent=self.root_dept)
+        self.child_dept = self.create_dept("研发一组", "permission-rd-team", parent=self.user_dept)
+        self.other_dept = self.create_dept("运营部", "permission-ops", parent=self.root_dept)
 
-@timing_decorator
-def getMenu():
-    data = []
-    queryset = Menu.objects.filter(status=1, is_catalog=False).values('name', 'id')
-    for item in queryset:
-        parent_list = Menu.get_all_parent(item['id'])
-        names = [d["name"] for d in parent_list]
-        completeName = "/".join(names)
-        isCheck = RoleMenuPermission.objects.filter(
-            menu__id=item['id'],
-            role__id=1,
-        ).exists()
-        mbCheck = RoleMenuButtonPermission.objects.filter(
-        menu_button = OuterRef("pk"),
-        role__id=1,
+        self.role = Role.objects.create(name="权限测试角色", key="permission-test-role")
+        self.user = self.create_user("permission_user", self.user_dept, role=self.role)
+        self.superuser = self.create_user(
+            "permission_superuser",
+            self.root_dept,
+            is_superuser=True,
+            is_staff=True,
         )
-        btns = MenuButton.objects.filter(
-            menu__id=item['id'],
-        ).annotate(isCheck=Exists(mbCheck)).values('id', 'name', 'value', 'isCheck',data_range=F('menu_button_permission__data_range'))
-        # print(b)
-        dicts = {
-            'name': completeName,
-            'id': item['id'],
-            'isCheck': isCheck,
-            'btns':btns
-        }
-        print(dicts)
-        data.append(dicts)
-    # print(data)
 
-if __name__ == '__main__':
-    getMenu()
+        self.root_dept.creator = self.superuser
+        self.root_dept.dept_belong_id = self.root_dept.id
+        self.root_dept.save(update_fields=["creator", "dept_belong_id"])
+
+        self.user_dept.creator = self.user
+        self.user_dept.dept_belong_id = self.user_dept.id
+        self.user_dept.save(update_fields=["creator", "dept_belong_id"])
+
+        self.child_dept.creator = self.superuser
+        self.child_dept.dept_belong_id = self.child_dept.id
+        self.child_dept.save(update_fields=["creator", "dept_belong_id"])
+
+        self.other_dept.creator = self.superuser
+        self.other_dept.dept_belong_id = self.other_dept.id
+        self.other_dept.save(update_fields=["creator", "dept_belong_id"])
+
+        self.dept_menu = Menu.objects.create(
+            name="部门管理",
+            web_path="/system/dept",
+            component="system/dept/index",
+            component_name="system/dept",
+            status=True,
+            visible=True,
+            sort=1,
+        )
+        RoleMenuPermission.objects.create(role=self.role, menu=self.dept_menu)
+
+        self.dept_search_button = MenuButton.objects.create(
+            menu=self.dept_menu,
+            name="查询",
+            value="dept:Search",
+            api=self.dept_list_url,
+            method=0,
+        )
+        self.dept_retrieve_button = MenuButton.objects.create(
+            menu=self.dept_menu,
+            name="详情",
+            value="dept:Retrieve",
+            api="/api/system/dept/{id}/",
+            method=0,
+        )
+        self.dept_update_button = MenuButton.objects.create(
+            menu=self.dept_menu,
+            name="编辑",
+            value="dept:Update",
+            api="/api/system/dept/{id}/",
+            method=2,
+        )
+
+        self.list_permission = RoleMenuButtonPermission.objects.create(
+            role=self.role,
+            menu_button=self.dept_search_button,
+            data_range=0,
+        )
+        self.detail_permission = RoleMenuButtonPermission.objects.create(
+            role=self.role,
+            menu_button=self.dept_retrieve_button,
+            data_range=1,
+        )
+
+        self.user_client = APIClient()
+        self.user_client.force_authenticate(user=self.user)
+
+        self.superuser_client = APIClient()
+        self.superuser_client.force_authenticate(user=self.superuser)
+
+    def create_dept(self, name, key, parent=None):
+        dept = Dept.objects.create(name=name, key=key, parent=parent, status=True)
+        dept.dept_belong_id = dept.id
+        dept.save(update_fields=["dept_belong_id"])
+        return dept
+
+    def create_user(self, username, dept, role=None, **extra_fields):
+        user = Users.objects.create(
+            username=username,
+            name=username,
+            dept=dept,
+            is_active=True,
+            **extra_fields,
+        )
+        user.set_password("password")
+        user.save()
+        if role is not None:
+            user.role.add(role)
+        return user
+
+    def set_list_data_range(self, data_range):
+        self.list_permission.data_range = data_range
+        self.list_permission.save(update_fields=["data_range"])
+
+    def test_page_access_and_button_permissions_are_separated(self):
+        menu_response = self.user_client.get(self.menu_router_url)
+        self.assertEqual(menu_response.status_code, 200)
+        self.assertIn(
+            self.dept_menu.id,
+            {item["id"] for item in menu_response.data["data"]},
+        )
+
+        button_response = self.user_client.get(self.button_permission_url)
+        self.assertEqual(button_response.status_code, 200)
+        self.assertSetEqual(
+            set(button_response.data["data"]),
+            {"dept:Search", "dept:Retrieve"},
+        )
+        self.assertNotIn("dept:Update", button_response.data["data"])
+
+    def test_dept_list_uses_current_button_data_range_without_shifting(self):
+        cases = [
+            (0, {self.user_dept.id}),
+            (2, {self.user_dept.id}),
+            (1, {self.user_dept.id, self.child_dept.id}),
+        ]
+
+        for data_range, expected_ids in cases:
+            with self.subTest(data_range=data_range):
+                self.set_list_data_range(data_range)
+                response = self.user_client.get(self.dept_list_url)
+                self.assertEqual(response.status_code, 200)
+                returned_ids = {item["id"] for item in response.data["data"]}
+                self.assertSetEqual(returned_ids, expected_ids)
+                self.assertNotIn(self.other_dept.id, returned_ids)
+
+    def test_superuser_is_not_limited_by_normal_role_data_permissions(self):
+        response = self.superuser_client.get(self.dept_list_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertSetEqual(
+            {item["id"] for item in response.data["data"]},
+            {
+                self.root_dept.id,
+                self.user_dept.id,
+                self.child_dept.id,
+                self.other_dept.id,
+            },
+        )
+
+    def test_data_permission_matching_respects_path_normalization_and_method_constraints(self):
+        queryset = Dept.objects.filter(
+            id__in=[
+                self.root_dept.id,
+                self.user_dept.id,
+                self.child_dept.id,
+                self.other_dept.id,
+            ]
+        )
+        permission_filter = DataLevelPermissionsFilter()
+
+        detail_request = SimpleNamespace(
+            user=self.user,
+            path=f"/api/system/dept/{self.child_dept.id}/",
+            method="GET",
+            parser_context={"kwargs": {"pk": str(self.child_dept.id)}},
+        )
+        detail_queryset = permission_filter.filter_queryset(detail_request, queryset, None)
+        self.assertSetEqual(
+            set(detail_queryset.values_list("id", flat=True)),
+            {self.user_dept.id, self.child_dept.id},
+        )
+
+        changed_method_request = SimpleNamespace(
+            user=self.user,
+            path=f"/api/system/dept/{self.child_dept.id}/",
+            method="POST",
+            parser_context={"kwargs": {"pk": str(self.child_dept.id)}},
+        )
+        changed_method_queryset = permission_filter.filter_queryset(
+            changed_method_request,
+            queryset,
+            None,
+        )
+        self.assertFalse(changed_method_queryset.exists())
+
+        changed_path_request = SimpleNamespace(
+            user=self.user,
+            path="/api/system/dept/all_dept/",
+            method="GET",
+            parser_context={"kwargs": {}},
+        )
+        changed_path_queryset = permission_filter.filter_queryset(
+            changed_path_request,
+            queryset,
+            None,
+        )
+        self.assertFalse(changed_path_queryset.exists())
