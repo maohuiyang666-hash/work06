@@ -29,7 +29,7 @@ const storesThemeConfig = useThemeConfig(pinia);
 const {themeConfig} = storeToRefs(storesThemeConfig);
 const {isRequestRoutes} = themeConfig.value;
 import {useUserInfo} from "/@/stores/userInfo";
-const { userInfos } = storeToRefs(useUserInfo());
+const { userInfos } = storeToRefs(useUserInfo(pinia));
 
 /**
  * 创建一个可以被 Vue 应用程序使用的路由实例
@@ -139,15 +139,25 @@ router.beforeEach(async (to, from, next) => {
             if (routesList.value.length === 0) {
                 if (isRequestRoutes) {
                     // 后端控制路由：路由数据初始化，防止刷新时丢失
-                    await initBackEndControlRoutes();
+                    const isSuccess = await initBackEndControlRoutes();
+                    if (isSuccess === false) {
+                        Session.clear();
+                        next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
+                        return;
+                    }
                     // 解决刷新时，一直跳 404 页面问题，关联问题 No match found for location with path 'xxx'
                     // to.query 防止页面刷新时，普通路由带参数时，参数丢失。动态路由（xxx/:id/:name"）isDynamic 无需处理
 
-                    next({ path: to.path, query: to.query });
+                    next({ path: to.path, query: to.query, replace: true });
                 } else {
                     // https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
-                    await initFrontEndControlRoutes();
-                    next({ path: to.path, query: to.query });
+                    const isSuccess = await initFrontEndControlRoutes();
+                    if (isSuccess === false) {
+                        Session.clear();
+                        next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
+                        return;
+                    }
+                    next({ path: to.path, query: to.query, replace: true });
                 }
             } else {
                 next();

@@ -45,19 +45,25 @@ export async function initBackEndControlRoutes() {
 	if (!Session.get('token')) return false;
 	// 触发初始化用户信息 pinia
 	// https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
-	await useUserInfo().getApiUserInfo();
-	// 获取路由菜单数据
-	const res = await getBackEndControlRoutes();
-	// 无登录权限时，添加判断
-	// https://gitee.com/lyt-top/vue-next-admin/issues/I64HVO
-	// if (res.data.length <= 0) return Promise.resolve(true);
-	// 处理路由（component），替换 dynamicRoutes（/@/router/route）第一个顶级 children 的路由
-	const {frameIn,frameOut} = handleMenu(res.data)
-	dynamicRoutes[0].children = await backEndComponent(frameIn);
-	// 添加动态路由
-	await setAddRoute();
-	// 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
-	await setFilterMenuAndCacheTagsViewRoutes();
+	try {
+		await useUserInfo(pinia).getApiUserInfo();
+		// 获取路由菜单数据
+		const res = await getBackEndControlRoutes();
+		// 无登录权限时，添加判断
+		// https://gitee.com/lyt-top/vue-next-admin/issues/I64HVO
+		// if (res.data.length <= 0) return Promise.resolve(true);
+		// 处理路由（component），替换 dynamicRoutes（/@/router/route）第一个顶级 children 的路由
+		const {frameIn,frameOut} = handleMenu(res.data)
+		dynamicRoutes[0].children = await backEndComponent(frameIn);
+		// 添加动态路由
+		await setAddRoute();
+		// 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
+		await setFilterMenuAndCacheTagsViewRoutes();
+		return true;
+	} catch (error) {
+		console.error('Failed to initialize backend routes:', error);
+		return false;
+	}
 }
 
 export async function setRouters(){
