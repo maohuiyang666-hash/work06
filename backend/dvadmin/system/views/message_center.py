@@ -21,7 +21,14 @@ class MessageCenterSerializer(CustomModelSerializer):
     role_info = DynamicSerializerMethodField()
     user_info = DynamicSerializerMethodField()
     dept_info = DynamicSerializerMethodField()
-    is_read = serializers.BooleanField(read_only=True, source='target_user__is_read')
+    is_read = serializers.SerializerMethodField()
+
+    def get_is_read(self, instance):
+        user_id = self.request.user.id
+        queryset = MessageCenterTargetUser.objects.filter(messagecenter__id=instance.id, users_id=user_id).first()
+        if queryset:
+            return queryset.is_read
+        return False
 
     def get_role_info(self, instance, parsed_query):
         roles = instance.target_role.all()
@@ -257,3 +264,12 @@ class MessageCenterViewSet(CustomModelViewSet):
             serializer = MessageCenterTargetUserListSerializer(queryset.messagecenter, many=False, request=request)
             data = serializer.data
         return DetailResponse(data=data, msg="获取成功")
+
+    @action(methods=['GET'], detail=False, permission_classes=[IsAuthenticated])
+    def get_unread_count(self, request):
+        """
+        获取当前用户未读消息数量
+        """
+        user_id = self.request.user.id
+        unread_count = MessageCenterTargetUser.objects.filter(users__id=user_id, is_read=False).count()
+        return DetailResponse(data={"unread_count": unread_count}, msg="获取成功")

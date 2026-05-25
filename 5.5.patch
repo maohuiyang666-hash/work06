@@ -1,0 +1,165 @@
+diff --git a/backend/application/sse_views.py b/backend/application/sse_views.py
+index f1cbe01..98c13cc 100644
+--- a/backend/application/sse_views.py
++++ b/backend/application/sse_views.py
+@@ -11,6 +11,10 @@ from django.core.cache import cache
+ 
+ def event_stream(user_id):
+     last_sent_time = 0
++    # 首次连接立即发送当前未读数
++    count = MessageCenterTargetUser.objects.filter(users=user_id, is_read=False).count()
++    yield f"data: {count}\n\n"
++    last_sent_time = time.time()
+ 
+     while True:
+         # 从 Redis 中获取最后数据库变更时间
+diff --git a/backend/dvadmin/system/views/message_center.py b/backend/dvadmin/system/views/message_center.py
+index 52c065f..7fc13fd 100644
+--- a/backend/dvadmin/system/views/message_center.py
++++ b/backend/dvadmin/system/views/message_center.py
+@@ -21,7 +21,14 @@ class MessageCenterSerializer(CustomModelSerializer):
+     role_info = DynamicSerializerMethodField()
+     user_info = DynamicSerializerMethodField()
+     dept_info = DynamicSerializerMethodField()
+-    is_read = serializers.BooleanField(read_only=True, source='target_user__is_read')
++    is_read = serializers.SerializerMethodField()
++
++    def get_is_read(self, instance):
++        user_id = self.request.user.id
++        queryset = MessageCenterTargetUser.objects.filter(messagecenter__id=instance.id, users_id=user_id).first()
++        if queryset:
++            return queryset.is_read
++        return False
+ 
+     def get_role_info(self, instance, parsed_query):
+         roles = instance.target_role.all()
+@@ -257,3 +264,12 @@ class MessageCenterViewSet(CustomModelViewSet):
+             serializer = MessageCenterTargetUserListSerializer(queryset.messagecenter, many=False, request=request)
+             data = serializer.data
+         return DetailResponse(data=data, msg="获取成功")
++
++    @action(methods=['GET'], detail=False, permission_classes=[IsAuthenticated])
++    def get_unread_count(self, request):
++        """
++        获取当前用户未读消息数量
++        """
++        user_id = self.request.user.id
++        unread_count = MessageCenterTargetUser.objects.filter(users__id=user_id, is_read=False).count()
++        return DetailResponse(data={"unread_count": unread_count}, msg="获取成功")
+diff --git a/web/src/layout/navBars/breadcrumb/user.vue b/web/src/layout/navBars/breadcrumb/user.vue
+index 0e3703c..e838148 100644
+--- a/web/src/layout/navBars/breadcrumb/user.vue
++++ b/web/src/layout/navBars/breadcrumb/user.vue
+@@ -255,11 +255,18 @@ onMounted(() => {
+ //消息中心的未读数量
+ import { messageCenterStore } from '/@/stores/messageCenter';
+ import { getBaseURL } from '/@/utils/baseUrl';
++import { GetUnreadCount } from '/@/views/system/messageCenter/api';
+ const messageCenter = messageCenterStore();
+ let eventSource: EventSource | null = null; // 存储 EventSource 实例
+ const token = Session.get('token');
+ const isConnected = ref(false); // 标志变量，记录是否已连接过
+ const getMessageCenterCount = () => {
++	// 先通过API获取一次未读数，确保页面加载时立即显示正确值
++	GetUnreadCount().then((res: any) => {
++		if (res.data && res.data.unread_count !== undefined) {
++			messageCenter.setUnread(res.data.unread_count);
++		}
++	}).catch(() => {});
+ 	// 创建 EventSource 实例并连接到后端 SSE 端点
+ 	eventSource = new EventSource(`${getBaseURL()}sse/?token=${token}`); // 替换为你的后端地址
+ 	// 首次连接成功时打印一次
+@@ -271,17 +278,22 @@ const getMessageCenterCount = () => {
+ 	};
+ 	// 监听消息事件
+ 	eventSource.onmessage = function (event) {
+-		console.log(event.data);
+-
+ 		messageCenter.setUnread(+event.data); // 更新总记录数
+ 	};
+ 
+-	// 错误处理
+-	eventSource.onerror = function (err) {
+-		console.error('SSE 错误:', err);
+-		if (eventSource !== null && eventSource.readyState === EventSource.CLOSED) {
+-			console.log('连接已关闭');
++	// 错误处理 - 自动重连
++	eventSource.onerror = function () {
++		console.error('SSE 连接错误，尝试重连...');
++		if (eventSource !== null) {
++			eventSource.close();
++			eventSource = null;
+ 		}
++		// 3秒后重连
++		setTimeout(() => {
++			if (!eventSource) {
++				getMessageCenterCount();
++			}
++		}, 3000);
+ 	};
+ };
+ </script>
+diff --git a/web/src/utils/websocket.ts b/web/src/utils/websocket.ts
+index 2fabadb..36eb5b5 100644
+--- a/web/src/utils/websocket.ts
++++ b/web/src/utils/websocket.ts
+@@ -23,6 +23,8 @@ const websocket: socket = {
+     reconnect_timer: null,
+     // 重连频率
+     reconnect_interval: 5 * 1000,
++    // 保存消息回调，重连时使用
++    onMessageCallback: null as Function | null,
+     init: (receiveMessage: Function | null) => {
+         if (!('WebSocket' in window)) {
+             message.warning('浏览器不支持WebSocket')
+@@ -33,11 +35,15 @@ const websocket: socket = {
+             // message.warning('websocket认证失败')
+             return null
+         }
++        // 保存回调，重连时复用
++        if (receiveMessage) {
++            websocket.onMessageCallback = receiveMessage
++        }
+         const wsUrl = `${getWsBaseURL()}ws/${token}/`
+         websocket.websocket = new WebSocket(wsUrl)
+         websocket.websocket.onmessage = (e: any) => {
+-            if (receiveMessage) {
+-                receiveMessage(e)
++            if (websocket.onMessageCallback) {
++                websocket.onMessageCallback(e)
+             }
+         }
+         websocket.websocket.onclose = (e: any) => {
+@@ -65,6 +71,8 @@ const websocket: socket = {
+             websocket.socket_open = true
+             useUserInfo().setWebSocketState(websocket.socket_open);
+             websocket.is_reonnect = true
++            // 重置重连计数
++            websocket.reconnect_current = 1
+             // 开启心跳
+             websocket.heartbeat()
+         }
+@@ -112,7 +120,7 @@ const websocket: socket = {
+         if (websocket.websocket && !websocket.is_reonnect) {
+             websocket.close()
+         }
+-        websocket.init(null)
++        websocket.init(websocket.onMessageCallback)
+     },
+ }
+ export default websocket;
+diff --git a/web/src/views/system/messageCenter/api.ts b/web/src/views/system/messageCenter/api.ts
+index 8d6054a..1c069e7 100644
+--- a/web/src/views/system/messageCenter/api.ts
++++ b/web/src/views/system/messageCenter/api.ts
+@@ -58,3 +58,10 @@ export function DelObj(id: DelReq) {
+         data: {id},
+     });
+ }
++
++export function GetUnreadCount() {
++    return request({
++        url: apiPrefix + 'get_unread_count/',
++        method: 'get',
++    });
++}

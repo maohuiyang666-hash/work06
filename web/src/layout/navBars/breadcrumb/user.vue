@@ -255,11 +255,18 @@ onMounted(() => {
 //消息中心的未读数量
 import { messageCenterStore } from '/@/stores/messageCenter';
 import { getBaseURL } from '/@/utils/baseUrl';
+import { GetUnreadCount } from '/@/views/system/messageCenter/api';
 const messageCenter = messageCenterStore();
 let eventSource: EventSource | null = null; // 存储 EventSource 实例
 const token = Session.get('token');
 const isConnected = ref(false); // 标志变量，记录是否已连接过
 const getMessageCenterCount = () => {
+	// 先通过API获取一次未读数，确保页面加载时立即显示正确值
+	GetUnreadCount().then((res: any) => {
+		if (res.data && res.data.unread_count !== undefined) {
+			messageCenter.setUnread(res.data.unread_count);
+		}
+	}).catch(() => {});
 	// 创建 EventSource 实例并连接到后端 SSE 端点
 	eventSource = new EventSource(`${getBaseURL()}sse/?token=${token}`); // 替换为你的后端地址
 	// 首次连接成功时打印一次
@@ -271,17 +278,22 @@ const getMessageCenterCount = () => {
 	};
 	// 监听消息事件
 	eventSource.onmessage = function (event) {
-		console.log(event.data);
-
 		messageCenter.setUnread(+event.data); // 更新总记录数
 	};
 
-	// 错误处理
-	eventSource.onerror = function (err) {
-		console.error('SSE 错误:', err);
-		if (eventSource !== null && eventSource.readyState === EventSource.CLOSED) {
-			console.log('连接已关闭');
+	// 错误处理 - 自动重连
+	eventSource.onerror = function () {
+		console.error('SSE 连接错误，尝试重连...');
+		if (eventSource !== null) {
+			eventSource.close();
+			eventSource = null;
 		}
+		// 3秒后重连
+		setTimeout(() => {
+			if (!eventSource) {
+				getMessageCenterCount();
+			}
+		}, 3000);
 	};
 };
 </script>

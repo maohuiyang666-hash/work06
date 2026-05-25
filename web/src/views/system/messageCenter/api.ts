@@ -58,3 +58,10 @@ export function DelObj(id: DelReq) {
         data: {id},
     });
 }
+
+export function GetUnreadCount() {
+    return request({
+        url: apiPrefix + 'get_unread_count/',
+        method: 'get',
+    });
+}

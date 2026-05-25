@@ -23,6 +23,8 @@ const websocket: socket = {
     reconnect_timer: null,
     // 重连频率
     reconnect_interval: 5 * 1000,
+    // 保存消息回调，重连时使用
+    onMessageCallback: null as Function | null,
     init: (receiveMessage: Function | null) => {
         if (!('WebSocket' in window)) {
             message.warning('浏览器不支持WebSocket')
@@ -33,11 +35,15 @@ const websocket: socket = {
             // message.warning('websocket认证失败')
             return null
         }
+        // 保存回调，重连时复用
+        if (receiveMessage) {
+            websocket.onMessageCallback = receiveMessage
+        }
         const wsUrl = `${getWsBaseURL()}ws/${token}/`
         websocket.websocket = new WebSocket(wsUrl)
         websocket.websocket.onmessage = (e: any) => {
-            if (receiveMessage) {
-                receiveMessage(e)
+            if (websocket.onMessageCallback) {
+                websocket.onMessageCallback(e)
             }
         }
         websocket.websocket.onclose = (e: any) => {
@@ -65,6 +71,8 @@ const websocket: socket = {
             websocket.socket_open = true
             useUserInfo().setWebSocketState(websocket.socket_open);
             websocket.is_reonnect = true
+            // 重置重连计数
+            websocket.reconnect_current = 1
             // 开启心跳
             websocket.heartbeat()
         }
@@ -112,7 +120,7 @@ const websocket: socket = {
         if (websocket.websocket && !websocket.is_reonnect) {
             websocket.close()
         }
-        websocket.init(null)
+        websocket.init(websocket.onMessageCallback)
     },
 }
 export default websocket;

@@ -11,6 +11,10 @@ from django.core.cache import cache
 
 def event_stream(user_id):
     last_sent_time = 0
+    # 首次连接立即发送当前未读数
+    count = MessageCenterTargetUser.objects.filter(users=user_id, is_read=False).count()
+    yield f"data: {count}\n\n"
+    last_sent_time = time.time()
 
     while True:
         # 从 Redis 中获取最后数据库变更时间
