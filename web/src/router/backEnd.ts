@@ -1,5 +1,4 @@
 import { RouteRecordRaw } from 'vue-router';
-import { storeToRefs } from 'pinia';
 import pinia from '/@/stores/index';
 import { useUserInfo } from '/@/stores/userInfo';
 import { useRequestOldRoutes } from '/@/stores/requestOldRoutes';
@@ -12,11 +11,12 @@ import { useTagsViewRoutes } from '/@/stores/tagsViewRoutes';
 import { useMenuApi } from '/@/api/menu/index';
 import { handleMenu } from '../utils/menu';
 import { BtnPermissionStore } from '/@/plugin/permission/store.permission';
-import {SystemConfigStore} from "/@/stores/systemConfig";
-import {useDeptInfoStore} from "/@/stores/modules/dept";
-import {DictionaryStore} from "/@/stores/dictionary";
-import {useFrontendMenuStore} from "/@/stores/frontendMenu";
-import {toRaw} from "vue";
+import { SystemConfigStore } from '/@/stores/systemConfig';
+import { useDeptInfoStore } from '/@/stores/modules/dept';
+import { DictionaryStore } from '/@/stores/dictionary';
+import { useFrontendMenuStore } from '/@/stores/frontendMenu';
+import { toRaw } from 'vue';
+
 const menuApi = useMenuApi();
 
 const layouModules: any = import.meta.glob('../layout/routerView/*.{vue,tsx}');
@@ -30,6 +30,12 @@ const greatDream: any = import.meta.glob('@great-dream/**/*.{vue,tsx}');
  */
 const dynamicViewsModules: Record<string, Function> = Object.assign({}, { ...layouModules }, { ...viewsModules }, { ...greatDream });
 
+let backEndControlRoutesInitPromise: Promise<boolean> | null = null;
+
+const hasBackEndRoutesMounted = () => {
+	return router.hasRoute('/');
+};
+
 /**
  * 后端控制路由：初始化方法，防止刷新时路由丢失
  * @method NextLoading 界面 loading 动画开始执行
@@ -39,43 +45,45 @@ const dynamicViewsModules: Record<string, Function> = Object.assign({}, { ...lay
  * @method setFilterMenuAndCacheTagsViewRoutes 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
  */
 export async function initBackEndControlRoutes() {
-	// 界面 loading 动画开始执行
-	if (window.nextLoading === undefined) NextLoading.start();
-	// 无 token 停止执行下一步
 	if (!Session.get('token')) return false;
-	// 触发初始化用户信息 pinia
-	// https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
-	await useUserInfo().getApiUserInfo();
-	// 获取路由菜单数据
-	const res = await getBackEndControlRoutes();
-	// 无登录权限时，添加判断
-	// https://gitee.com/lyt-top/vue-next-admin/issues/I64HVO
-	// if (res.data.length <= 0) return Promise.resolve(true);
-	// 处理路由（component），替换 dynamicRoutes（/@/router/route）第一个顶级 children 的路由
-	const {frameIn,frameOut} = handleMenu(res.data)
-	dynamicRoutes[0].children = await backEndComponent(frameIn);
-	// 添加动态路由
-	await setAddRoute();
-	// 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
-	await setFilterMenuAndCacheTagsViewRoutes();
+	if (hasBackEndRoutesMounted() && dynamicRoutes[0].children.length > 0) {
+		await setFilterMenuAndCacheTagsViewRoutes();
+		return true;
+	}
+	if (backEndControlRoutesInitPromise) return await backEndControlRoutesInitPromise;
+	backEndControlRoutesInitPromise = (async () => {
+		if (window.nextLoading === undefined) NextLoading.start();
+		await useUserInfo().getApiUserInfo();
+		const res = await getBackEndControlRoutes();
+		await useRequestOldRoutes().setRequestOldRoutes(res.data);
+		const { frameIn } = handleMenu(res.data);
+		dynamicRoutes[0].children = await backEndComponent(frameIn);
+		await setAddRoute();
+		await setFilterMenuAndCacheTagsViewRoutes();
+		return true;
+	})();
+	try {
+		return await backEndControlRoutesInitPromise;
+	} finally {
+		backEndControlRoutesInitPromise = null;
+	}
 }
 
-export async function setRouters(){
-	const {frameInRoutes,frameOutRoutes} = await useFrontendMenuStore().getRouter()
-	const frameInRouter = toRaw(frameInRoutes)
-	const frameOutRouter = toRaw(frameOutRoutes)
-	dynamicRoutes[0].children = frameInRouter
-	dynamicRoutes.forEach((item:any)=>{
-		router.addRoute(item)
-	})
-	frameOutRouter.forEach((item:any)=>{
-		router.addRoute(item)
-	})
+export async function setRouters() {
+	const { frameInRoutes, frameOutRoutes } = await useFrontendMenuStore().getRouter();
+	const frameInRouter = toRaw(frameInRoutes);
+	const frameOutRouter = toRaw(frameOutRoutes);
+	dynamicRoutes[0].children = frameInRouter;
+	dynamicRoutes.forEach((item: any) => {
+		router.addRoute(item);
+	});
+	frameOutRouter.forEach((item: any) => {
+		router.addRoute(item);
+	});
 	const storesRoutesList = useRoutesList(pinia);
-	storesRoutesList.setRoutesList([...dynamicRoutes[0].children,...frameOutRouter]);
+	storesRoutesList.setRoutesList([...dynamicRoutes[0].children, ...frameOutRouter]);
 	const storesTagsView = useTagsViewRoutes(pinia);
-	storesTagsView.setTagsViewRoutes([...dynamicRoutes[0].children,...frameOutRouter])
-
+	storesTagsView.setTagsViewRoutes([...dynamicRoutes[0].children, ...frameOutRouter]);
 }
 
 /**
@@ -83,19 +91,19 @@ export async function setRouters(){
  * @description 用于左侧菜单、横向菜单的显示
  * @description 用于 tagsView、菜单搜索中：未过滤隐藏的(isHide)
  */
-export function setFilterMenuAndCacheTagsViewRoutes() {
+export async function setFilterMenuAndCacheTagsViewRoutes() {
 	const storesRoutesList = useRoutesList(pinia);
-	storesRoutesList.setRoutesList(dynamicRoutes[0].children as any);
-	setCacheTagsViewRoutes();
+	await storesRoutesList.setRoutesList(dynamicRoutes[0].children as any);
+	await setCacheTagsViewRoutes();
 }
 
 /**
  * 缓存多级嵌套数组处理后的一维数组
  * @description 用于 tagsView、菜单搜索中：未过滤隐藏的(isHide)
  */
-export function setCacheTagsViewRoutes() {
+export async function setCacheTagsViewRoutes() {
 	const storesTagsView = useTagsViewRoutes(pinia);
-	storesTagsView.setTagsViewRoutes(formatTwoStageRoutes(formatFlatteningRoutes(dynamicRoutes))[0].children);
+	await storesTagsView.setTagsViewRoutes(formatTwoStageRoutes(formatFlatteningRoutes(dynamicRoutes))[0].children);
 }
 
 /**
@@ -105,8 +113,6 @@ export function setCacheTagsViewRoutes() {
  */
 export function setFilterRouteEnd() {
 	let filterRouteEnd: any = formatTwoStageRoutes(formatFlatteningRoutes(dynamicRoutes));
-	// notFoundAndNoPower 防止 404、401 不在 layout 布局中，不设置的话，404、401 界面将全屏显示
-	// 关联问题 No match found for location with path 'xxx'
 	filterRouteEnd[0].children = [...filterRouteEnd[0].children, ...notFoundAndNoPower];
 	return filterRouteEnd;
 }
@@ -118,7 +124,7 @@ export function setFilterRouteEnd() {
  * @link 参考：https://next.router.vuejs.org/zh/api/#addroute
  */
 export async function setAddRoute() {
-	await setFilterRouteEnd().forEach((route: RouteRecordRaw) => {
+	setFilterRouteEnd().forEach((route: RouteRecordRaw) => {
 		router.addRoute(route);
 	});
 }
@@ -129,14 +135,10 @@ export async function setAddRoute() {
  * @returns 返回后端路由菜单数据
  */
 export function getBackEndControlRoutes() {
-	//获取所有的按钮权限
 	BtnPermissionStore().getBtnPermissionStore();
-	// 获取系统配置
-	SystemConfigStore().getSystemConfigs()
-	// 获取所有部门信息
-	useDeptInfoStore().requestDeptInfo()
-	// 获取字典信息
-	DictionaryStore().getSystemDictionarys()
+	SystemConfigStore().getSystemConfigs();
+	useDeptInfoStore().requestDeptInfo();
+	DictionaryStore().getSystemDictionarys();
 	return menuApi.getSystemMenu();
 }
 
@@ -158,31 +160,18 @@ export function backEndComponent(routes: any) {
 	if (!routes) return;
 	return routes.map((item: any) => {
 		if (item.component) item.component = dynamicImport(dynamicViewsModules, item.component as string);
-		if(item.is_catalog){
-			// 对目录的处理
-			item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/parent')
+		if (item.is_catalog) {
+			item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/parent');
 		}
-		if(item.is_link){
-			// 对外链接的处理
-			if(item.is_iframe){
-				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/iframes')
-			}else {
-				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/link')
+		if (item.is_link) {
+			if (item.is_iframe) {
+				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/iframes');
+			} else {
+				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/link');
 			}
-		}else{
-			if(item.is_iframe){
-				// const iframeRoute:RouteRecordRaw = {
-				// 	...item
-				// }
-				// router.addRoute(iframeRoute)
-				item.meta.isLink = item.link_url
-				// item.path = `${item.path}Link`
-				// item.name = `${item.name}Link`
-				// item.meta.isIframe = item.is_iframe
-				// item.meta.isKeepAlive = false
-				// item.meta.isIframeOpen = true
-				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/link.vue')
-			}
+		} else if (item.is_iframe) {
+			item.meta.isLink = item.link_url;
+			item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/link.vue');
 		}
 		item.children && backEndComponent(item.children);
 		return item;
@@ -199,9 +188,9 @@ export function dynamicImport(dynamicViewsModules: Record<string, Function>, com
 	const keys = Object.keys(dynamicViewsModules);
 	const matchKeys = keys.filter((key) => {
 		const k = key.replace(/..\/views|../, '');
-		const k0 = k.replace("ode_modules/@great-dream/", '')
-		const k1 = k0.replace("/plugins", '')
-		const newComponent = component.replace("plugins/", "")
+		const k0 = k.replace('ode_modules/@great-dream/', '');
+		const k1 = k0.replace('/plugins', '');
+		const newComponent = component.replace('plugins/', '');
 		return k1.startsWith(`${newComponent}`) || k1.startsWith(`/${newComponent}`);
 	});
 	if (matchKeys?.length === 1) {

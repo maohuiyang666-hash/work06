@@ -45,18 +45,17 @@
 			</el-button>
 		</el-form-item>
 	</el-form>
-  <!--      申请试用-->
-  <div style="text-align: center" v-if="showApply()">
-    <el-button class="login-content-apply" link type="primary" plain round @click="applyBtnClick">
-      <span>申请试用</span>
-    </el-button>
-  </div>
+	<div style="text-align: center" v-if="showApply()">
+		<el-button class="login-content-apply" link type="primary" plain round @click="applyBtnClick">
+			<span>申请试用</span>
+		</el-button>
+	</div>
 </template>
 
 <script lang="ts">
-import { toRefs, reactive, defineComponent, computed, onMounted, onUnmounted, ref } from 'vue';
+import { toRefs, reactive, defineComponent, computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMessage, FormInstance, FormRules } from 'element-plus';
+import { ElMessage, FormRules } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import Cookies from 'js-cookie';
 import { storeToRefs } from 'pinia';
@@ -70,10 +69,9 @@ import * as loginApi from '/@/views/system/login/api';
 import { useUserInfo } from '/@/stores/userInfo';
 import { DictionaryStore } from '/@/stores/dictionary';
 import { SystemConfigStore } from '/@/stores/systemConfig';
-import { BtnPermissionStore } from '/@/plugin/permission/store.permission';
 import { Md5 } from 'ts-md5';
 import { errorMessage } from '/@/utils/message';
-import {getBaseURL} from "/@/utils/baseUrl";
+import { getBaseURL } from '/@/utils/baseUrl';
 
 export default defineComponent({
 	name: 'loginAccount',
@@ -98,30 +96,14 @@ export default defineComponent({
 			},
 		});
 		const rules = reactive<FormRules>({
-			username: [
-				{ required: true, message: '请填写账号', trigger: 'blur' },
-			],
-			password: [
-				{
-					required: true,
-					message: '请填写密码',
-					trigger: 'blur',
-				},
-			],
-			captcha: [
-				{
-					required: true,
-					message: '请填写验证码',
-					trigger: 'blur',
-				},
-			],
-		})
+			username: [{ required: true, message: '请填写账号', trigger: 'blur' }],
+			password: [{ required: true, message: '请填写密码', trigger: 'blur' }],
+			captcha: [{ required: true, message: '请填写验证码', trigger: 'blur' }],
+		});
 		const formRef = ref();
-		// 时间获取
 		const currentTime = computed(() => {
 			return formatAxis(new Date());
 		});
-		// 是否关闭验证码
 		const isShowCaptcha = computed(() => {
 			return SystemConfigStore().systemConfig['base.captcha_state'];
 		});
@@ -135,87 +117,84 @@ export default defineComponent({
 		const applyBtnClick = async () => {
 			window.open(getBaseURL('/api/system/apply_for_trial/'));
 		};
-    const refreshCaptcha = async () => {
-			state.ruleForm.captcha=''
+		const refreshCaptcha = async () => {
+			state.ruleForm.captcha = '';
 			loginApi.getCaptcha().then((ret: any) => {
 				state.ruleForm.captchaImgBase = ret.data.image_base;
 				state.ruleForm.captchaKey = ret.data.key;
 			});
 		};
+		const getRedirectQuery = () => {
+			const params = route.query?.params;
+			if (!params || typeof params !== 'string') return undefined;
+			try {
+				const parsedParams = JSON.parse(params);
+				return Object.keys(parsedParams || {}).length > 0 ? parsedParams : undefined;
+			} catch (error) {
+				return undefined;
+			}
+		};
+		const redirectAfterLogin = async () => {
+			const redirectPath = typeof route.query?.redirect === 'string' ? route.query.redirect : '';
+			if (redirectPath && redirectPath !== '/login') {
+				await router.push({
+					path: redirectPath,
+					query: getRedirectQuery(),
+				});
+				return;
+			}
+			await router.push('/');
+		};
+		const initLoginRoutes = async () => {
+			if (!themeConfig.value.isRequestRoutes) {
+				await initFrontEndControlRoutes();
+				return;
+			}
+			await initBackEndControlRoutes();
+		};
 		const loginClick = async () => {
-			if (!formRef.value) return
-			await formRef.value.validate((valid: any) => {
-				if (valid) {
-					loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) }).then((res: any) => {
-						if (res.code === 2000) {
-              const {data} = res
-              Cookies.set('username', res.data.username);
-              Session.set('token', res.data.access);
-              useUserInfo().setPwdChangeCount(data.pwd_change_count)
-              if(data.pwd_change_count==0){
-                return router.push('/login');
-              }
-							if (!themeConfig.value.isRequestRoutes) {
-								// 前端控制路由，2、请注意执行顺序
-								initFrontEndControlRoutes();
-								loginSuccess();
-							} else {
-								// 模拟后端控制路由，isRequestRoutes 为 true，则开启后端控制路由
-								// 添加完动态路由，再进行 router 跳转，否则可能报错 No match found for location with path "/"
-								initBackEndControlRoutes();
-								// 执行完 initBackEndControlRoutes，再执行 signInSuccess
-								loginSuccess();
-							}
-						}
-					}).catch((err: any) => {
-						// 登录错误之后，刷新验证码
-						refreshCaptcha();
-					});
-				} else {
-					errorMessage("请填写登录信息")
+			if (!formRef.value) return;
+			const valid = await formRef.value.validate().then(() => true).catch(() => false);
+			if (!valid) {
+				errorMessage('请填写登录信息');
+				return;
+			}
+			state.loading.signIn = true;
+			try {
+				const res: any = await loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) });
+				if (res.code !== 2000) return;
+				const { data } = res;
+				Cookies.set('username', data.username);
+				Session.set('token', data.access);
+				useUserInfo().setPwdChangeCount(data.pwd_change_count);
+				if (data.pwd_change_count == 0) {
+					await router.push('/login');
+					return;
 				}
-			})
-
+				await initLoginRoutes();
+				await loginSuccess();
+			} catch (error) {
+				refreshCaptcha();
+			} finally {
+				state.loading.signIn = false;
+			}
 		};
 
-
-
-		// 登录成功后的跳转
-		const loginSuccess = () => {
-			//获取所有字典
+		const loginSuccess = async () => {
 			DictionaryStore().getSystemDictionarys();
-			// 初始化登录成功时间问候语
-			let currentTimeInfo = currentTime.value;
-			// 登录成功，跳到转首页
-      const pwd_change_count = userInfos.value.pwd_change_count ?? 0
-      if(pwd_change_count > 0){
-        // 如果是复制粘贴的路径，非首页/登录页，那么登录成功后重定向到对应的路径中
-        if (route.query?.redirect) {
-        	router.push({
-        		path: <string>route.query?.redirect,
-        		query: Object.keys(<string>route.query?.params).length > 0 ? JSON.parse(<string>route.query?.params) : '',
-        	});
-        } else {
-        	router.push('/');
-        }
-        // 登录成功提示
-        // 关闭 loading
-        state.loading.signIn = true;
-        const signInText = t('message.signInText');
-        ElMessage.success(`${currentTimeInfo}，${signInText}`);
-      }
-			// 添加 loading，防止第一次进入界面时出现短暂空白
+			const currentTimeInfo = currentTime.value;
 			NextLoading.start();
+			await redirectAfterLogin();
+			const signInText = t('message.signInText');
+			ElMessage.success(`${currentTimeInfo}，${signInText}`);
 		};
 		onMounted(() => {
 			getCaptcha();
-			//获取系统配置
 			SystemConfigStore().getSystemConfigs();
 		});
-    // 是否显示申请试用按钮
-    const showApply = () => {
-      return window.location.href.indexOf('public') != -1
-    }
+		const showApply = () => {
+			return window.location.href.indexOf('public') != -1;
+		};
 
 		return {
 			refreshCaptcha,
@@ -225,8 +204,8 @@ export default defineComponent({
 			state,
 			formRef,
 			rules,
-      applyBtnClick,
-      showApply,
+			applyBtnClick,
+			showApply,
 			...toRefs(state),
 		};
 	},
@@ -234,28 +213,25 @@ export default defineComponent({
 </script>
 
 <style scoped lang="scss">
-// 定义error-num动画的关键帧
 @keyframes error-num {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+	from {
+		opacity: 0;
+		transform: translateY(20px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .login-content-form {
 	margin-top: 20px;
 
-	// 为输入框添加圆角和设置字体大小
 	:deep(.el-input__wrapper) {
 		border-radius: 8px !important;
 	}
-	// 设置输入框文字大小
 	:deep(.el-input__inner) {
-		font-size: 12px !important; // Element Plus large尺寸的默认字体大小
+		font-size: 12px !important;
 	}
 
 	@for $i from 1 through 4 {
@@ -283,7 +259,7 @@ export default defineComponent({
 		padding: 0;
 		font-weight: bold;
 		letter-spacing: 5px;
-    border-radius: 8px !important;
+		border-radius: 8px !important;
 	}
 
 	.login-content-submit {
@@ -291,7 +267,7 @@ export default defineComponent({
 		letter-spacing: 2px;
 		font-weight: 800;
 		margin-top: 15px;
-    border-radius:8px;
+		border-radius: 8px;
 	}
 }
 </style>

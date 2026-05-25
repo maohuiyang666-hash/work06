@@ -1,0 +1,1089 @@
+diff --git a/web/src/router/backEnd.ts b/web/src/router/backEnd.ts
+index 4b45623..3756424 100644
+--- a/web/src/router/backEnd.ts
++++ b/web/src/router/backEnd.ts
+@@ -1,5 +1,4 @@
+ import { RouteRecordRaw } from 'vue-router';
+-import { storeToRefs } from 'pinia';
+ import pinia from '/@/stores/index';
+ import { useUserInfo } from '/@/stores/userInfo';
+ import { useRequestOldRoutes } from '/@/stores/requestOldRoutes';
+@@ -12,11 +11,12 @@ import { useTagsViewRoutes } from '/@/stores/tagsViewRoutes';
+ import { useMenuApi } from '/@/api/menu/index';
+ import { handleMenu } from '../utils/menu';
+ import { BtnPermissionStore } from '/@/plugin/permission/store.permission';
+-import {SystemConfigStore} from "/@/stores/systemConfig";
+-import {useDeptInfoStore} from "/@/stores/modules/dept";
+-import {DictionaryStore} from "/@/stores/dictionary";
+-import {useFrontendMenuStore} from "/@/stores/frontendMenu";
+-import {toRaw} from "vue";
++import { SystemConfigStore } from '/@/stores/systemConfig';
++import { useDeptInfoStore } from '/@/stores/modules/dept';
++import { DictionaryStore } from '/@/stores/dictionary';
++import { useFrontendMenuStore } from '/@/stores/frontendMenu';
++import { toRaw } from 'vue';
++
+ const menuApi = useMenuApi();
+ 
+ const layouModules: any = import.meta.glob('../layout/routerView/*.{vue,tsx}');
+@@ -30,6 +30,12 @@ const greatDream: any = import.meta.glob('@great-dream/**/*.{vue,tsx}');
+  */
+ const dynamicViewsModules: Record<string, Function> = Object.assign({}, { ...layouModules }, { ...viewsModules }, { ...greatDream });
+ 
++let backEndControlRoutesInitPromise: Promise<boolean> | null = null;
++
++const hasBackEndRoutesMounted = () => {
++	return router.hasRoute('/');
++};
++
+ /**
+  * 后端控制路由：初始化方法，防止刷新时路由丢失
+  * @method NextLoading 界面 loading 动画开始执行
+@@ -39,43 +45,45 @@ const dynamicViewsModules: Record<string, Function> = Object.assign({}, { ...lay
+  * @method setFilterMenuAndCacheTagsViewRoutes 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
+  */
+ export async function initBackEndControlRoutes() {
+-	// 界面 loading 动画开始执行
+-	if (window.nextLoading === undefined) NextLoading.start();
+-	// 无 token 停止执行下一步
+ 	if (!Session.get('token')) return false;
+-	// 触发初始化用户信息 pinia
+-	// https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
+-	await useUserInfo().getApiUserInfo();
+-	// 获取路由菜单数据
+-	const res = await getBackEndControlRoutes();
+-	// 无登录权限时，添加判断
+-	// https://gitee.com/lyt-top/vue-next-admin/issues/I64HVO
+-	// if (res.data.length <= 0) return Promise.resolve(true);
+-	// 处理路由（component），替换 dynamicRoutes（/@/router/route）第一个顶级 children 的路由
+-	const {frameIn,frameOut} = handleMenu(res.data)
+-	dynamicRoutes[0].children = await backEndComponent(frameIn);
+-	// 添加动态路由
+-	await setAddRoute();
+-	// 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
+-	await setFilterMenuAndCacheTagsViewRoutes();
++	if (hasBackEndRoutesMounted() && dynamicRoutes[0].children.length > 0) {
++		await setFilterMenuAndCacheTagsViewRoutes();
++		return true;
++	}
++	if (backEndControlRoutesInitPromise) return await backEndControlRoutesInitPromise;
++	backEndControlRoutesInitPromise = (async () => {
++		if (window.nextLoading === undefined) NextLoading.start();
++		await useUserInfo().getApiUserInfo();
++		const res = await getBackEndControlRoutes();
++		await useRequestOldRoutes().setRequestOldRoutes(res.data);
++		const { frameIn } = handleMenu(res.data);
++		dynamicRoutes[0].children = await backEndComponent(frameIn);
++		await setAddRoute();
++		await setFilterMenuAndCacheTagsViewRoutes();
++		return true;
++	})();
++	try {
++		return await backEndControlRoutesInitPromise;
++	} finally {
++		backEndControlRoutesInitPromise = null;
++	}
+ }
+ 
+-export async function setRouters(){
+-	const {frameInRoutes,frameOutRoutes} = await useFrontendMenuStore().getRouter()
+-	const frameInRouter = toRaw(frameInRoutes)
+-	const frameOutRouter = toRaw(frameOutRoutes)
+-	dynamicRoutes[0].children = frameInRouter
+-	dynamicRoutes.forEach((item:any)=>{
+-		router.addRoute(item)
+-	})
+-	frameOutRouter.forEach((item:any)=>{
+-		router.addRoute(item)
+-	})
++export async function setRouters() {
++	const { frameInRoutes, frameOutRoutes } = await useFrontendMenuStore().getRouter();
++	const frameInRouter = toRaw(frameInRoutes);
++	const frameOutRouter = toRaw(frameOutRoutes);
++	dynamicRoutes[0].children = frameInRouter;
++	dynamicRoutes.forEach((item: any) => {
++		router.addRoute(item);
++	});
++	frameOutRouter.forEach((item: any) => {
++		router.addRoute(item);
++	});
+ 	const storesRoutesList = useRoutesList(pinia);
+-	storesRoutesList.setRoutesList([...dynamicRoutes[0].children,...frameOutRouter]);
++	storesRoutesList.setRoutesList([...dynamicRoutes[0].children, ...frameOutRouter]);
+ 	const storesTagsView = useTagsViewRoutes(pinia);
+-	storesTagsView.setTagsViewRoutes([...dynamicRoutes[0].children,...frameOutRouter])
+-
++	storesTagsView.setTagsViewRoutes([...dynamicRoutes[0].children, ...frameOutRouter]);
+ }
+ 
+ /**
+@@ -83,19 +91,19 @@ export async function setRouters(){
+  * @description 用于左侧菜单、横向菜单的显示
+  * @description 用于 tagsView、菜单搜索中：未过滤隐藏的(isHide)
+  */
+-export function setFilterMenuAndCacheTagsViewRoutes() {
++export async function setFilterMenuAndCacheTagsViewRoutes() {
+ 	const storesRoutesList = useRoutesList(pinia);
+-	storesRoutesList.setRoutesList(dynamicRoutes[0].children as any);
+-	setCacheTagsViewRoutes();
++	await storesRoutesList.setRoutesList(dynamicRoutes[0].children as any);
++	await setCacheTagsViewRoutes();
+ }
+ 
+ /**
+  * 缓存多级嵌套数组处理后的一维数组
+  * @description 用于 tagsView、菜单搜索中：未过滤隐藏的(isHide)
+  */
+-export function setCacheTagsViewRoutes() {
++export async function setCacheTagsViewRoutes() {
+ 	const storesTagsView = useTagsViewRoutes(pinia);
+-	storesTagsView.setTagsViewRoutes(formatTwoStageRoutes(formatFlatteningRoutes(dynamicRoutes))[0].children);
++	await storesTagsView.setTagsViewRoutes(formatTwoStageRoutes(formatFlatteningRoutes(dynamicRoutes))[0].children);
+ }
+ 
+ /**
+@@ -105,8 +113,6 @@ export function setCacheTagsViewRoutes() {
+  */
+ export function setFilterRouteEnd() {
+ 	let filterRouteEnd: any = formatTwoStageRoutes(formatFlatteningRoutes(dynamicRoutes));
+-	// notFoundAndNoPower 防止 404、401 不在 layout 布局中，不设置的话，404、401 界面将全屏显示
+-	// 关联问题 No match found for location with path 'xxx'
+ 	filterRouteEnd[0].children = [...filterRouteEnd[0].children, ...notFoundAndNoPower];
+ 	return filterRouteEnd;
+ }
+@@ -118,7 +124,7 @@ export function setFilterRouteEnd() {
+  * @link 参考：https://next.router.vuejs.org/zh/api/#addroute
+  */
+ export async function setAddRoute() {
+-	await setFilterRouteEnd().forEach((route: RouteRecordRaw) => {
++	setFilterRouteEnd().forEach((route: RouteRecordRaw) => {
+ 		router.addRoute(route);
+ 	});
+ }
+@@ -129,14 +135,10 @@ export async function setAddRoute() {
+  * @returns 返回后端路由菜单数据
+  */
+ export function getBackEndControlRoutes() {
+-	//获取所有的按钮权限
+ 	BtnPermissionStore().getBtnPermissionStore();
+-	// 获取系统配置
+-	SystemConfigStore().getSystemConfigs()
+-	// 获取所有部门信息
+-	useDeptInfoStore().requestDeptInfo()
+-	// 获取字典信息
+-	DictionaryStore().getSystemDictionarys()
++	SystemConfigStore().getSystemConfigs();
++	useDeptInfoStore().requestDeptInfo();
++	DictionaryStore().getSystemDictionarys();
+ 	return menuApi.getSystemMenu();
+ }
+ 
+@@ -158,31 +160,18 @@ export function backEndComponent(routes: any) {
+ 	if (!routes) return;
+ 	return routes.map((item: any) => {
+ 		if (item.component) item.component = dynamicImport(dynamicViewsModules, item.component as string);
+-		if(item.is_catalog){
+-			// 对目录的处理
+-			item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/parent')
++		if (item.is_catalog) {
++			item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/parent');
+ 		}
+-		if(item.is_link){
+-			// 对外链接的处理
+-			if(item.is_iframe){
+-				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/iframes')
+-			}else {
+-				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/link')
+-			}
+-		}else{
+-			if(item.is_iframe){
+-				// const iframeRoute:RouteRecordRaw = {
+-				// 	...item
+-				// }
+-				// router.addRoute(iframeRoute)
+-				item.meta.isLink = item.link_url
+-				// item.path = `${item.path}Link`
+-				// item.name = `${item.name}Link`
+-				// item.meta.isIframe = item.is_iframe
+-				// item.meta.isKeepAlive = false
+-				// item.meta.isIframeOpen = true
+-				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/link.vue')
++		if (item.is_link) {
++			if (item.is_iframe) {
++				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/iframes');
++			} else {
++				item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/link');
+ 			}
++		} else if (item.is_iframe) {
++			item.meta.isLink = item.link_url;
++			item.component = dynamicImport(dynamicViewsModules, 'layout/routerView/link.vue');
+ 		}
+ 		item.children && backEndComponent(item.children);
+ 		return item;
+@@ -199,9 +188,9 @@ export function dynamicImport(dynamicViewsModules: Record<string, Function>, com
+ 	const keys = Object.keys(dynamicViewsModules);
+ 	const matchKeys = keys.filter((key) => {
+ 		const k = key.replace(/..\/views|../, '');
+-		const k0 = k.replace("ode_modules/@great-dream/", '')
+-		const k1 = k0.replace("/plugins", '')
+-		const newComponent = component.replace("plugins/", "")
++		const k0 = k.replace('ode_modules/@great-dream/', '');
++		const k1 = k0.replace('/plugins', '');
++		const newComponent = component.replace('plugins/', '');
+ 		return k1.startsWith(`${newComponent}`) || k1.startsWith(`/${newComponent}`);
+ 	});
+ 	if (matchKeys?.length === 1) {
+diff --git a/web/src/router/index.ts b/web/src/router/index.ts
+index 37708c6..a03de6b 100644
+--- a/web/src/router/index.ts
++++ b/web/src/router/index.ts
+@@ -1,19 +1,16 @@
+-import {createRouter, createWebHashHistory} from 'vue-router';
++import { createRouter, createWebHashHistory } from 'vue-router';
+ import NProgress from 'nprogress';
+ import 'nprogress/nprogress.css';
+ import pinia from '/@/stores/index';
+-import {storeToRefs} from 'pinia';
+-import {useKeepALiveNames} from '/@/stores/keepAliveNames';
+-import {useRoutesList} from '/@/stores/routesList';
+-import {useThemeConfig} from '/@/stores/themeConfig';
+-import {Session} from '/@/utils/storage';
+-import {dynamicRoutes, notFoundAndNoPower, staticRoutes} from '/@/router/route';
+-import {initFrontEndControlRoutes} from '/@/router/frontEnd';
+-import {initBackEndControlRoutes, setRouters} from '/@/router/backEnd';
+-import {useFrontendMenuStore} from "/@/stores/frontendMenu";
+-import {useTagsViewRoutes} from "/@/stores/tagsViewRoutes";
+-import {toRaw} from "vue";
+-import {checkVersion} from "/@/utils/upgrade";
++import { storeToRefs } from 'pinia';
++import { useKeepALiveNames } from '/@/stores/keepAliveNames';
++import { useThemeConfig } from '/@/stores/themeConfig';
++import { Session } from '/@/utils/storage';
++import { notFoundAndNoPower, staticRoutes } from '/@/router/route';
++import { initFrontEndControlRoutes } from '/@/router/frontEnd';
++import { initBackEndControlRoutes } from '/@/router/backEnd';
++import { checkVersion } from '/@/utils/upgrade';
++import { useUserInfo } from '/@/stores/userInfo';
+ 
+ /**
+  * 1、前端控制路由时：isRequestRoutes 为 false，需要写 roles，需要走 setFilterRoute 方法。
+@@ -24,12 +21,9 @@ import {checkVersion} from "/@/utils/upgrade";
+  * 2、后端控制：路由菜单由后端返回（有菜单管理界面、有角色管理界面）
+  */
+ 
+-// 读取 `/src/stores/themeConfig.ts` 是否开启后端控制路由配置
+ const storesThemeConfig = useThemeConfig(pinia);
+-const {themeConfig} = storeToRefs(storesThemeConfig);
+-const {isRequestRoutes} = themeConfig.value;
+-import {useUserInfo} from "/@/stores/userInfo";
+-const { userInfos } = storeToRefs(useUserInfo());
++const { themeConfig } = storeToRefs(storesThemeConfig);
++const { isRequestRoutes } = themeConfig.value;
+ 
+ /**
+  * 创建一个可以被 Vue 应用程序使用的路由实例
+@@ -37,14 +31,14 @@ const { userInfos } = storeToRefs(useUserInfo());
+  * @link 参考：https://next.router.vuejs.org/zh/api/#createrouter
+  */
+ export const router = createRouter({
+-    history: createWebHashHistory(),
+-    /**
+-     * 说明：
+-     * 1、notFoundAndNoPower 默认添加 404、401 界面，防止一直提示 No match found for location with path 'xxx'
+-     * 2、backEnd.ts(后端控制路由)、frontEnd.ts(前端控制路由) 中也需要加 notFoundAndNoPower 404、401 界面。
+-     *    防止 404、401 不在 layout 布局中，不设置的话，404、401 界面将全屏显示
+-     */
+-    routes: [...notFoundAndNoPower, ...staticRoutes]
++	history: createWebHashHistory(),
++	/**
++	 * 说明：
++	 * 1、notFoundAndNoPower 默认添加 404、401 界面，防止一直提示 No match found for location with path 'xxx'
++	 * 2、backEnd.ts(后端控制路由)、frontEnd.ts(前端控制路由) 中也需要加 notFoundAndNoPower 404、401 界面。
++	 *    防止 404、401 不在 layout 布局中，不设置的话，404、401 界面将全屏显示
++	 */
++	routes: [...notFoundAndNoPower, ...staticRoutes],
+ });
+ 
+ /**
+@@ -53,13 +47,13 @@ export const router = createRouter({
+  * @returns 返回处理后的一维路由菜单数组
+  */
+ export function formatFlatteningRoutes(arr: any) {
+-    if (arr.length <= 0) return false;
+-    for (let i = 0; i < arr.length; i++) {
+-        if (arr[i].children) {
+-            arr = arr.slice(0, i + 1).concat(arr[i].children, arr.slice(i + 1));
+-        }
+-    }
+-    return arr;
++	if (arr.length <= 0) return false;
++	for (let i = 0; i < arr.length; i++) {
++		if (arr[i].children) {
++			arr = arr.slice(0, i + 1).concat(arr[i].children, arr.slice(i + 1));
++		}
++	}
++	return arr;
+ }
+ 
+ /**
+@@ -70,96 +64,121 @@ export function formatFlatteningRoutes(arr: any) {
+  * @returns 返回将一维数组重新处理成 `定义动态路由（dynamicRoutes）` 的格式
+  */
+ export function formatTwoStageRoutes(arr: any) {
+-    if (arr.length <= 0) return false;
+-    const newArr: any = [];
+-    const cacheList: Array<string> = [];
+-    arr.forEach((v: any) => {
+-        if (v.path === '/') {
+-            newArr.push({component: v.component,name: v.name,path: v.path,redirect: v.redirect,meta: v.meta,children: []});
+-        } else {
+-            // 判断是否是动态路由（xx/:id/:name），用于 tagsView 等中使用
+-            // 修复：https://gitee.com/lyt-top/vue-next-admin/issues/I3YX6G
+-            if (v.path.indexOf('/:') > -1) {
+-                v.meta['isDynamic'] = true;
+-                v.meta['isDynamicPath'] = v.path;
+-            }
+-            newArr[0].children.push({...v});
+-            // 存 name 值，keep-alive 中 include 使用，实现路由的缓存
+-            // 路径：/@/layout/routerView/parent.vue
+-            if (newArr[0].meta.isKeepAlive && v.meta.isKeepAlive && v.component_name != "") {
+-                cacheList.push(v.name);
+-                const stores = useKeepALiveNames(pinia);
+-                stores.setCacheKeepAlive(cacheList);
+-            }
+-        }
+-    });
+-    return newArr;
++	if (arr.length <= 0) return false;
++	const newArr: any = [];
++	const cacheList: Array<string> = [];
++	arr.forEach((v: any) => {
++		if (v.path === '/') {
++			newArr.push({ component: v.component, name: v.name, path: v.path, redirect: v.redirect, meta: v.meta, children: [] });
++		} else {
++			if (v.path.indexOf('/:') > -1) {
++				v.meta['isDynamic'] = true;
++				v.meta['isDynamicPath'] = v.path;
++			}
++			newArr[0].children.push({ ...v });
++			if (newArr[0].meta.isKeepAlive && v.meta.isKeepAlive && v.component_name != '') {
++				cacheList.push(v.name);
++				const stores = useKeepALiveNames(pinia);
++				stores.setCacheKeepAlive(cacheList);
++			}
++		}
++	});
++	return newArr;
+ }
+ 
+-const frameOutRoutes = staticRoutes.map(item => item.path)
++const frameOutRoutes = staticRoutes.map((item) => item.path);
+ 
+-const checkToken = ()=>{
+-    const urlParams = new URLSearchParams(window.location.search);
+-    const _oauth2_token = urlParams.get('_oauth2_token');
+-    if (_oauth2_token) {
+-        Session.set('token', _oauth2_token);
+-        const cleanUrl = window.location.href.split('?')[0];
+-        window.history.replaceState({}, '', cleanUrl);
+-        useUserInfo(pinia).setUserInfos();
++const getLoginRedirect = (to: any) => {
++	return `/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`;
++};
+ 
+-    }
+-}
+-// 路由加载前
+-router.beforeEach(async (to, from, next) => {
+-    // 检查浏览器本地版本与线上版本是否一致，判断是否需要刷新页面进行更新
+-    await checkVersion()
+-    checkToken()
+-    NProgress.configure({showSpinner: false});
+-    if (to.meta.title) NProgress.start();
+-    const token = Session.get('token');
+-    if (to.path === '/login' && !token) {
+-        next();
+-        NProgress.done();
+-    } else {
+-        if (!token) {
+-            next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
+-            Session.clear();
+-            NProgress.done();
+-        }else if (token && to.path === '/login' && userInfos.value.pwd_change_count===0 ) {
+-            next('/login');
+-            NProgress.done();
+-        } else if (token && to.path === '/login' && userInfos.value.pwd_change_count>0) {
+-            next('/home');
+-            NProgress.done();
+-        }else if(token &&  frameOutRoutes.includes(to.path) ){
+-            next()
+-        } else {
+-            const storesRoutesList = useRoutesList(pinia);
+-            const {routesList} = storeToRefs(storesRoutesList);
+-            if (routesList.value.length === 0) {
+-                if (isRequestRoutes) {
+-                    // 后端控制路由：路由数据初始化，防止刷新时丢失
+-                    await initBackEndControlRoutes();
+-                    // 解决刷新时，一直跳 404 页面问题，关联问题 No match found for location with path 'xxx'
+-                    // to.query 防止页面刷新时，普通路由带参数时，参数丢失。动态路由（xxx/:id/:name"）isDynamic 无需处理
++const hasDynamicRoutesMounted = () => {
++	return router.hasRoute('/');
++};
++
++const ensureUserInfoReady = async () => {
++	const userStore = useUserInfo(pinia);
++	if (userStore.userInfos.id && userStore.userInfos.pwd_change_count !== null) return;
++	await userStore.setUserInfos();
++};
+ 
+-                    next({ path: to.path, query: to.query });
+-                } else {
+-                    // https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
+-                    await initFrontEndControlRoutes();
+-                    next({ path: to.path, query: to.query });
+-                }
+-            } else {
+-                next();
+-            }
+-        }
+-    }
++const initDynamicRoutes = async () => {
++	if (isRequestRoutes) return await initBackEndControlRoutes();
++	return await initFrontEndControlRoutes();
++};
++
++const checkToken = async () => {
++	const urlParams = new URLSearchParams(window.location.search);
++	const oauth2Token = urlParams.get('_oauth2_token');
++	if (oauth2Token) {
++		Session.set('token', oauth2Token);
++		const cleanUrl = window.location.href.split('?')[0];
++		window.history.replaceState({}, '', cleanUrl);
++		await useUserInfo(pinia).setUserInfos();
++	}
++};
++
++router.beforeEach(async (to, from, next) => {
++	await checkVersion();
++	await checkToken();
++	NProgress.configure({ showSpinner: false });
++	if (to.meta.title) NProgress.start();
++	const token = Session.get('token');
++	if (!token) {
++		if (to.path === '/login') {
++			next();
++		} else {
++			Session.clear();
++			next(getLoginRedirect(to));
++		}
++		NProgress.done();
++		return;
++	}
++	if (to.path === '/login') {
++		try {
++			await ensureUserInfoReady();
++		} catch (error) {
++			next();
++			NProgress.done();
++			return;
++		}
++		if ((useUserInfo(pinia).userInfos.pwd_change_count ?? 0) > 0) {
++			next('/home');
++		} else {
++			next();
++		}
++		NProgress.done();
++		return;
++	}
++	if (frameOutRoutes.includes(to.path)) {
++		next();
++		return;
++	}
++	try {
++		if (!hasDynamicRoutesMounted()) {
++			await initDynamicRoutes();
++			if (!Session.get('token')) {
++				next(getLoginRedirect(to));
++				NProgress.done();
++				return;
++			}
++			next({ path: to.path, query: to.query, hash: to.hash, replace: true });
++			return;
++		}
++		next();
++	} catch (error) {
++		if (!Session.get('token')) {
++			Session.clear();
++			next(getLoginRedirect(to));
++		} else {
++			next('/login');
++		}
++		NProgress.done();
++	}
+ });
+ 
+-// 路由加载后
+ router.afterEach(() => {
+-    NProgress.done();
++	NProgress.done();
+ });
+ 
+-// 导出路由
+ export default router;
+diff --git a/web/src/views/system/login/component/account.vue b/web/src/views/system/login/component/account.vue
+index f6d224b..cfcde26 100644
+--- a/web/src/views/system/login/component/account.vue
++++ b/web/src/views/system/login/component/account.vue
+@@ -45,18 +45,17 @@
+ 			</el-button>
+ 		</el-form-item>
+ 	</el-form>
+-  <!--      申请试用-->
+-  <div style="text-align: center" v-if="showApply()">
+-    <el-button class="login-content-apply" link type="primary" plain round @click="applyBtnClick">
+-      <span>申请试用</span>
+-    </el-button>
+-  </div>
++	<div style="text-align: center" v-if="showApply()">
++		<el-button class="login-content-apply" link type="primary" plain round @click="applyBtnClick">
++			<span>申请试用</span>
++		</el-button>
++	</div>
+ </template>
+ 
+ <script lang="ts">
+-import { toRefs, reactive, defineComponent, computed, onMounted, onUnmounted, ref } from 'vue';
++import { toRefs, reactive, defineComponent, computed, onMounted, ref } from 'vue';
+ import { useRoute, useRouter } from 'vue-router';
+-import { ElMessage, FormInstance, FormRules } from 'element-plus';
++import { ElMessage, FormRules } from 'element-plus';
+ import { useI18n } from 'vue-i18n';
+ import Cookies from 'js-cookie';
+ import { storeToRefs } from 'pinia';
+@@ -70,10 +69,9 @@ import * as loginApi from '/@/views/system/login/api';
+ import { useUserInfo } from '/@/stores/userInfo';
+ import { DictionaryStore } from '/@/stores/dictionary';
+ import { SystemConfigStore } from '/@/stores/systemConfig';
+-import { BtnPermissionStore } from '/@/plugin/permission/store.permission';
+ import { Md5 } from 'ts-md5';
+ import { errorMessage } from '/@/utils/message';
+-import {getBaseURL} from "/@/utils/baseUrl";
++import { getBaseURL } from '/@/utils/baseUrl';
+ 
+ export default defineComponent({
+ 	name: 'loginAccount',
+@@ -98,30 +96,14 @@ export default defineComponent({
+ 			},
+ 		});
+ 		const rules = reactive<FormRules>({
+-			username: [
+-				{ required: true, message: '请填写账号', trigger: 'blur' },
+-			],
+-			password: [
+-				{
+-					required: true,
+-					message: '请填写密码',
+-					trigger: 'blur',
+-				},
+-			],
+-			captcha: [
+-				{
+-					required: true,
+-					message: '请填写验证码',
+-					trigger: 'blur',
+-				},
+-			],
+-		})
++			username: [{ required: true, message: '请填写账号', trigger: 'blur' }],
++			password: [{ required: true, message: '请填写密码', trigger: 'blur' }],
++			captcha: [{ required: true, message: '请填写验证码', trigger: 'blur' }],
++		});
+ 		const formRef = ref();
+-		// 时间获取
+ 		const currentTime = computed(() => {
+ 			return formatAxis(new Date());
+ 		});
+-		// 是否关闭验证码
+ 		const isShowCaptcha = computed(() => {
+ 			return SystemConfigStore().systemConfig['base.captcha_state'];
+ 		});
+@@ -135,87 +117,84 @@ export default defineComponent({
+ 		const applyBtnClick = async () => {
+ 			window.open(getBaseURL('/api/system/apply_for_trial/'));
+ 		};
+-    const refreshCaptcha = async () => {
+-			state.ruleForm.captcha=''
++		const refreshCaptcha = async () => {
++			state.ruleForm.captcha = '';
+ 			loginApi.getCaptcha().then((ret: any) => {
+ 				state.ruleForm.captchaImgBase = ret.data.image_base;
+ 				state.ruleForm.captchaKey = ret.data.key;
+ 			});
+ 		};
++		const getRedirectQuery = () => {
++			const params = route.query?.params;
++			if (!params || typeof params !== 'string') return undefined;
++			try {
++				const parsedParams = JSON.parse(params);
++				return Object.keys(parsedParams || {}).length > 0 ? parsedParams : undefined;
++			} catch (error) {
++				return undefined;
++			}
++		};
++		const redirectAfterLogin = async () => {
++			const redirectPath = typeof route.query?.redirect === 'string' ? route.query.redirect : '';
++			if (redirectPath && redirectPath !== '/login') {
++				await router.push({
++					path: redirectPath,
++					query: getRedirectQuery(),
++				});
++				return;
++			}
++			await router.push('/');
++		};
++		const initLoginRoutes = async () => {
++			if (!themeConfig.value.isRequestRoutes) {
++				await initFrontEndControlRoutes();
++				return;
++			}
++			await initBackEndControlRoutes();
++		};
+ 		const loginClick = async () => {
+-			if (!formRef.value) return
+-			await formRef.value.validate((valid: any) => {
+-				if (valid) {
+-					loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) }).then((res: any) => {
+-						if (res.code === 2000) {
+-              const {data} = res
+-              Cookies.set('username', res.data.username);
+-              Session.set('token', res.data.access);
+-              useUserInfo().setPwdChangeCount(data.pwd_change_count)
+-              if(data.pwd_change_count==0){
+-                return router.push('/login');
+-              }
+-							if (!themeConfig.value.isRequestRoutes) {
+-								// 前端控制路由，2、请注意执行顺序
+-								initFrontEndControlRoutes();
+-								loginSuccess();
+-							} else {
+-								// 模拟后端控制路由，isRequestRoutes 为 true，则开启后端控制路由
+-								// 添加完动态路由，再进行 router 跳转，否则可能报错 No match found for location with path "/"
+-								initBackEndControlRoutes();
+-								// 执行完 initBackEndControlRoutes，再执行 signInSuccess
+-								loginSuccess();
+-							}
+-						}
+-					}).catch((err: any) => {
+-						// 登录错误之后，刷新验证码
+-						refreshCaptcha();
+-					});
+-				} else {
+-					errorMessage("请填写登录信息")
++			if (!formRef.value) return;
++			const valid = await formRef.value.validate().then(() => true).catch(() => false);
++			if (!valid) {
++				errorMessage('请填写登录信息');
++				return;
++			}
++			state.loading.signIn = true;
++			try {
++				const res: any = await loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) });
++				if (res.code !== 2000) return;
++				const { data } = res;
++				Cookies.set('username', data.username);
++				Session.set('token', data.access);
++				useUserInfo().setPwdChangeCount(data.pwd_change_count);
++				if (data.pwd_change_count == 0) {
++					await router.push('/login');
++					return;
+ 				}
+-			})
+-
++				await initLoginRoutes();
++				await loginSuccess();
++			} catch (error) {
++				refreshCaptcha();
++			} finally {
++				state.loading.signIn = false;
++			}
+ 		};
+ 
+-
+-
+-		// 登录成功后的跳转
+-		const loginSuccess = () => {
+-			//获取所有字典
++		const loginSuccess = async () => {
+ 			DictionaryStore().getSystemDictionarys();
+-			// 初始化登录成功时间问候语
+-			let currentTimeInfo = currentTime.value;
+-			// 登录成功，跳到转首页
+-      const pwd_change_count = userInfos.value.pwd_change_count ?? 0
+-      if(pwd_change_count > 0){
+-        // 如果是复制粘贴的路径，非首页/登录页，那么登录成功后重定向到对应的路径中
+-        if (route.query?.redirect) {
+-        	router.push({
+-        		path: <string>route.query?.redirect,
+-        		query: Object.keys(<string>route.query?.params).length > 0 ? JSON.parse(<string>route.query?.params) : '',
+-        	});
+-        } else {
+-        	router.push('/');
+-        }
+-        // 登录成功提示
+-        // 关闭 loading
+-        state.loading.signIn = true;
+-        const signInText = t('message.signInText');
+-        ElMessage.success(`${currentTimeInfo}，${signInText}`);
+-      }
+-			// 添加 loading，防止第一次进入界面时出现短暂空白
++			const currentTimeInfo = currentTime.value;
+ 			NextLoading.start();
++			await redirectAfterLogin();
++			const signInText = t('message.signInText');
++			ElMessage.success(`${currentTimeInfo}，${signInText}`);
+ 		};
+ 		onMounted(() => {
+ 			getCaptcha();
+-			//获取系统配置
+ 			SystemConfigStore().getSystemConfigs();
+ 		});
+-    // 是否显示申请试用按钮
+-    const showApply = () => {
+-      return window.location.href.indexOf('public') != -1
+-    }
++		const showApply = () => {
++			return window.location.href.indexOf('public') != -1;
++		};
+ 
+ 		return {
+ 			refreshCaptcha,
+@@ -225,8 +204,8 @@ export default defineComponent({
+ 			state,
+ 			formRef,
+ 			rules,
+-      applyBtnClick,
+-      showApply,
++			applyBtnClick,
++			showApply,
+ 			...toRefs(state),
+ 		};
+ 	},
+@@ -234,28 +213,25 @@ export default defineComponent({
+ </script>
+ 
+ <style scoped lang="scss">
+-// 定义error-num动画的关键帧
+ @keyframes error-num {
+-  from {
+-    opacity: 0;
+-    transform: translateY(20px);
+-  }
+-  to {
+-    opacity: 1;
+-    transform: translateY(0);
+-  }
++	from {
++		opacity: 0;
++		transform: translateY(20px);
++	}
++	to {
++		opacity: 1;
++		transform: translateY(0);
++	}
+ }
+ 
+ .login-content-form {
+ 	margin-top: 20px;
+ 
+-	// 为输入框添加圆角和设置字体大小
+ 	:deep(.el-input__wrapper) {
+ 		border-radius: 8px !important;
+ 	}
+-	// 设置输入框文字大小
+ 	:deep(.el-input__inner) {
+-		font-size: 12px !important; // Element Plus large尺寸的默认字体大小
++		font-size: 12px !important;
+ 	}
+ 
+ 	@for $i from 1 through 4 {
+@@ -283,7 +259,7 @@ export default defineComponent({
+ 		padding: 0;
+ 		font-weight: bold;
+ 		letter-spacing: 5px;
+-    border-radius: 8px !important;
++		border-radius: 8px !important;
+ 	}
+ 
+ 	.login-content-submit {
+@@ -291,7 +267,7 @@ export default defineComponent({
+ 		letter-spacing: 2px;
+ 		font-weight: 800;
+ 		margin-top: 15px;
+-    border-radius:8px;
++		border-radius: 8px;
+ 	}
+ }
+ </style>
+diff --git a/web/src/views/system/login/component/changePwd.vue b/web/src/views/system/login/component/changePwd.vue
+index 2280dce..74e441b 100644
+--- a/web/src/views/system/login/component/changePwd.vue
++++ b/web/src/views/system/login/component/changePwd.vue
+@@ -43,7 +43,6 @@
+ 			</el-button>
+ 		</el-form-item>
+ 	</el-form>
+-	<!--      申请试用-->
+ 	<div style="text-align: center" v-if="showApply()">
+ 		<el-button class="login-content-apply" link type="primary" plain round @click="applyBtnClick">
+ 			<span>申请试用</span>
+@@ -52,27 +51,23 @@
+ </template>
+ 
+ <script lang="ts">
+-import { toRefs, reactive, defineComponent, computed, onMounted, onUnmounted, ref } from 'vue';
++import { toRefs, reactive, defineComponent, computed, onMounted, ref } from 'vue';
+ import { useRoute, useRouter } from 'vue-router';
+-import { ElMessage, FormInstance, FormRules } from 'element-plus';
++import { ElMessage, FormRules } from 'element-plus';
+ import { useI18n } from 'vue-i18n';
+ import Cookies from 'js-cookie';
+ import { storeToRefs } from 'pinia';
+ import { useThemeConfig } from '/@/stores/themeConfig';
+ import { initFrontEndControlRoutes } from '/@/router/frontEnd';
+ import { initBackEndControlRoutes } from '/@/router/backEnd';
+-import { Session } from '/@/utils/storage';
+ import { formatAxis } from '/@/utils/formatTime';
+ import { NextLoading } from '/@/utils/loading';
+ import * as loginApi from '/@/views/system/login/api';
+-import { useUserInfo } from '/@/stores/userInfo';
+ import { DictionaryStore } from '/@/stores/dictionary';
+ import { SystemConfigStore } from '/@/stores/systemConfig';
+-import { BtnPermissionStore } from '/@/plugin/permission/store.permission';
+ import { Md5 } from 'ts-md5';
+ import { errorMessage } from '/@/utils/message';
+-import { getBaseURL } from "/@/utils/baseUrl";
+-import { loginChangePwd } from "/@/views/system/login/api";
++import { getBaseURL } from '/@/utils/baseUrl';
+ 
+ export default defineComponent({
+ 	name: 'changePwd',
+@@ -80,7 +75,6 @@ export default defineComponent({
+ 		const { t } = useI18n();
+ 		const storesThemeConfig = useThemeConfig();
+ 		const { themeConfig } = storeToRefs(storesThemeConfig);
+-		const { userInfos } = storeToRefs(useUserInfo());
+ 		const route = useRoute();
+ 		const router = useRouter();
+ 		const state = reactive({
+@@ -88,7 +82,7 @@ export default defineComponent({
+ 			ruleForm: {
+ 				username: '',
+ 				password: '',
+-				password_regain: ''
++				password_regain: '',
+ 			},
+ 			loading: {
+ 				signIn: false,
+@@ -119,34 +113,17 @@ export default defineComponent({
+ 		};
+ 
+ 		const rules = reactive<FormRules>({
+-			username: [
+-				{ required: true, message: '请填写账号', trigger: 'blur' },
+-			],
++			username: [{ required: true, message: '请填写账号', trigger: 'blur' }],
+ 			password: [
+-				{
+-					required: true,
+-					message: '请填写密码',
+-					trigger: 'blur',
+-				},
+-				{
+-					validator: validatePass,
+-					trigger: 'blur',
+-				},
++				{ required: true, message: '请填写密码', trigger: 'blur' },
++				{ validator: validatePass, trigger: 'blur' },
+ 			],
+ 			password_regain: [
+-				{
+-					required: true,
+-					message: '请填写密码',
+-					trigger: 'blur',
+-				},
+-				{
+-					validator: validatePass2,
+-					trigger: 'blur',
+-				},
++				{ required: true, message: '请填写密码', trigger: 'blur' },
++				{ validator: validatePass2, trigger: 'blur' },
+ 			],
+-		})
++		});
+ 		const formRef = ref();
+-		// 时间获取
+ 		const currentTime = computed(() => {
+ 			return formatAxis(new Date());
+ 		});
+@@ -154,72 +131,73 @@ export default defineComponent({
+ 		const applyBtnClick = async () => {
+ 			window.open(getBaseURL('/api/system/apply_for_trial/'));
+ 		};
+-
+-		const loginClick = async () => {
+-			if (!formRef.value) return
+-			await formRef.value.validate((valid: any) => {
+-				if (valid) {
+-					loginApi.loginChangePwd({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password), password_regain: Md5.hashStr(state.ruleForm.password_regain) }).then((res: any) => {
+-						if (res.code === 2000) {
+-							if (!themeConfig.value.isRequestRoutes) {
+-								// 前端控制路由，2、请注意执行顺序
+-								initFrontEndControlRoutes();
+-								loginSuccess();
+-							} else {
+-								// 模拟后端控制路由，isRequestRoutes 为 true，则开启后端控制路由
+-								// 添加完动态路由，再进行 router 跳转，否则可能报错 No match found for location with path "/"
+-								initBackEndControlRoutes();
+-								// 执行完 initBackEndControlRoutes，再执行 signInSuccess
+-								loginSuccess();
+-							}
+-						}
+-					}).catch((err: any) => {
+-						// 登录错误之后，刷新验证码
+-						errorMessage("登录失败")
+-					});
+-				} else {
+-					errorMessage("请填写登录信息")
+-				}
+-			})
+-
++		const getRedirectQuery = () => {
++			const params = route.query?.params;
++			if (!params || typeof params !== 'string') return undefined;
++			try {
++				const parsedParams = JSON.parse(params);
++				return Object.keys(parsedParams || {}).length > 0 ? parsedParams : undefined;
++			} catch (error) {
++				return undefined;
++			}
+ 		};
+-
+-
+-		// 登录成功后的跳转
+-		const loginSuccess = () => {
+-
+-			//获取所有字典
+-			DictionaryStore().getSystemDictionarys();
+-
+-			// 初始化登录成功时间问候语
+-			let currentTimeInfo = currentTime.value;
+-			// 登录成功，跳到转首页
+-			// 如果是复制粘贴的路径，非首页/登录页，那么登录成功后重定向到对应的路径中
+-			if (route.query?.redirect) {
+-				router.push({
+-					path: <string>route.query?.redirect,
+-					query: Object.keys(<string>route.query?.params).length > 0 ? JSON.parse(<string>route.query?.params) : '',
++		const redirectAfterLogin = async () => {
++			const redirectPath = typeof route.query?.redirect === 'string' ? route.query.redirect : '';
++			if (redirectPath && redirectPath !== '/login') {
++				await router.push({
++					path: redirectPath,
++					query: getRedirectQuery(),
+ 				});
+-			} else {
+-				router.push('/');
++				return;
++			}
++			await router.push('/');
++		};
++		const initLoginRoutes = async () => {
++			if (!themeConfig.value.isRequestRoutes) {
++				await initFrontEndControlRoutes();
++				return;
++			}
++			await initBackEndControlRoutes();
++		};
++		const loginClick = async () => {
++			if (!formRef.value) return;
++			const valid = await formRef.value.validate().then(() => true).catch(() => false);
++			if (!valid) {
++				errorMessage('请填写登录信息');
++				return;
+ 			}
+-			// 登录成功提示
+-			// 关闭 loading
+ 			state.loading.signIn = true;
++			try {
++				const res: any = await loginApi.loginChangePwd({
++					...state.ruleForm,
++					password: Md5.hashStr(state.ruleForm.password),
++					password_regain: Md5.hashStr(state.ruleForm.password_regain),
++				});
++				if (res.code !== 2000) return;
++				await initLoginRoutes();
++				await loginSuccess();
++			} catch (error) {
++				errorMessage('登录失败');
++			} finally {
++				state.loading.signIn = false;
++			}
++		};
++
++		const loginSuccess = async () => {
++			DictionaryStore().getSystemDictionarys();
++			const currentTimeInfo = currentTime.value;
++			NextLoading.start();
++			await redirectAfterLogin();
+ 			const signInText = t('message.signInText');
+ 			ElMessage.success(`${currentTimeInfo}，${signInText}`);
+-			// 添加 loading，防止第一次进入界面时出现短暂空白
+-			NextLoading.start();
+ 		};
+ 		onMounted(() => {
+-			state.ruleForm.username = Cookies.get('username')
+-			//获取系统配置
++			state.ruleForm.username = Cookies.get('username');
+ 			SystemConfigStore().getSystemConfigs();
+ 		});
+-		// 是否显示申请试用按钮
+ 		const showApply = () => {
+-			return window.location.href.indexOf('public') != -1
+-		}
++			return window.location.href.indexOf('public') != -1;
++		};
+ 
+ 		return {
+ 			loginClick,
+@@ -239,13 +217,11 @@ export default defineComponent({
+ .login-content-form {
+ 	margin-top: 20px;
+ 
+-	// 为输入框添加圆角和设置字体大小
+ 	:deep(.el-input__wrapper) {
+ 		border-radius: 8px !important;
+ 	}
+-	// 设置输入框文字大小
+ 	:deep(.el-input__inner) {
+-		font-size: 12px !important; // Element Plus large尺寸的默认字体大小
++		font-size: 12px !important;
+ 	}
+ 
+ 	@for $i from 1 through 5 {
+@@ -273,7 +249,7 @@ export default defineComponent({
+ 		padding: 0;
+ 		font-weight: bold;
+ 		letter-spacing: 5px;
+-    border-radius: 8px !important;
++		border-radius: 8px !important;
+ 	}
+ 
+ 	.login-content-submit {
+@@ -281,7 +257,7 @@ export default defineComponent({
+ 		letter-spacing: 2px;
+ 		font-weight: 800;
+ 		margin-top: 15px;
+-    border-radius:8px;
++		border-radius: 8px;
+ 	}
+ }
+ </style>
