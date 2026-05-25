@@ -1,4 +1,8 @@
+import json
+import time
+from datetime import datetime, timedelta
 from functools import wraps
+from unittest.mock import patch
 
 from django.db.models import Func, F, OuterRef, Exists
 from django.test import TestCase
@@ -6,10 +10,10 @@ import django
 import os
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "application.settings")
 django.setup()
-from dvadmin.system.models import Menu, RoleMenuPermission, RoleMenuButtonPermission, MenuButton
 
+from captcha.models import CaptchaStore
+from dvadmin.system.models import Menu, RoleMenuPermission, RoleMenuButtonPermission, MenuButton, Users
 
-import time
 
 def timing_decorator(func):
     @wraps(func)
@@ -51,6 +55,201 @@ def getMenu():
         print(dicts)
         data.append(dicts)
     # print(data)
+
+# 原有 standalone 代码正常执行
+
+
+class LoginApiTests(TestCase):
+    """登录接口基础测试"""
+
+    login_url = "/api/login/"
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = Users.objects.create_user(
+            username="testuser",
+            password="Test@123456",
+            email="testuser@example.com",
+            mobile="13800138001",
+            name="测试用户",
+        )
+
+    # ========== 成功路径 ==========
+
+    def test_login_with_username_success(self):
+        """用户使用用户名登录成功"""
+        response = self.client.post(
+            self.login_url,
+            {"username": "testuser", "password": "Test@123456"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], 2000)
+        self.assertEqual(body["msg"], "请求成功")
+        self.assertIn("data", body)
+        self.assertIn("access", body["data"])
+        self.assertEqual(body["data"]["username"], "testuser")
+        self.assertEqual(body["data"]["name"], "测试用户")
+
+    def test_login_with_email_success(self):
+        """用户使用邮箱登录成功"""
+        response = self.client.post(
+            self.login_url,
+            {"username": "testuser@example.com", "password": "Test@123456"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], 2000)
+        self.assertEqual(body["msg"], "请求成功")
+        self.assertEqual(body["data"]["username"], "testuser")
+
+    def test_login_with_mobile_success(self):
+        """用户使用手机号登录成功"""
+        response = self.client.post(
+            self.login_url,
+            {"username": "13800138001", "password": "Test@123456"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], 2000)
+        self.assertEqual(body["msg"], "请求成功")
+        self.assertEqual(body["data"]["username"], "testuser")
+
+    def test_login_response_contains_required_fields(self):
+        """登录成功返回结果中包含前端初始化所需的关键字段"""
+        response = self.client.post(
+            self.login_url,
+            {"username": "testuser", "password": "Test@123456"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], 2000)
+        data = body["data"]
+        # token
+        self.assertIn("access", data)
+        self.assertIn("refresh", data)
+        # 用户信息
+        self.assertEqual(data["username"], "testuser")
+        self.assertEqual(data["name"], "测试用户")
+        self.assertEqual(data["userId"], self.user.id)
+        self.assertIn("avatar", data)
+        self.assertIn("user_type", data)
+        self.assertIn("pwd_change_count", data)
+        # 角色信息
+        self.assertIn("role_info", data)
+        # 部门信息
+        self.assertIn("dept_info", data)
+
+    # ========== 失败路径: 验证码 ==========
+
+    @patch("dvadmin.system.views.login.dispatch.get_system_config_values")
+    def test_login_missing_captcha_when_enabled(self, mock_config):
+        """开启验证码时缺少验证码字段返回预期错误"""
+        mock_config.return_value = True
+        response = self.client.post(
+            self.login_url,
+            {"username": "testuser", "password": "Test@123456"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], 4000)
+        self.assertIn("验证码不能为空", body["msg"])
+
+    @patch("dvadmin.system.views.login.dispatch.get_system_config_values")
+    def test_login_wrong_captcha(self, mock_config):
+        """验证码错误时返回预期错误"""
+        mock_config.return_value = True
+        captcha_obj = CaptchaStore.objects.create(
+            hashkey="test_hash",
+            response="abcd",
+            challenge="abcd",
+            expiration=datetime.now() + timedelta(minutes=5),
+        )
+        response = self.client.post(
+            self.login_url,
+            {
+                "username": "testuser",
+                "password": "Test@123456",
+                "captcha": "wrong",
+                "captchaKey": captcha_obj.id,
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], 4000)
+        self.assertIn("图片验证码错误", body["msg"])
+
+    # ========== 失败路径: 账号锁定 ==========
+
+    def test_account_lock_after_consecutive_failures(self):
+        """连续输错密码达到阈值后账号被锁定"""
+        for i in range(5):
+            response = self.client.post(
+                self.login_url,
+                {"username": "testuser", "password": "WrongPassword"},
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertEqual(body["code"], 4000)
+            if i < 4:
+                remaining = 4 - i
+                self.assertIn(f"重试{remaining}次后将被锁定", body["msg"])
+
+        # 第5次失败后应锁定
+        self.assertIn("账号已被锁定", body["msg"])
+
+        # 验证数据库中 is_active=False
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
+
+    def test_locked_account_login(self):
+        """已锁定账号再次登录时返回预期信息"""
+        self.user.is_active = False
+        self.user.save()
+
+        response = self.client.post(
+            self.login_url,
+            {"username": "testuser", "password": "Test@123456"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], 4000)
+        self.assertIn("账号已被锁定", body["msg"])
+
+    # ========== 其他失败路径 ==========
+
+    def test_login_with_wrong_password(self):
+        """错误密码登录返回预期错误"""
+        response = self.client.post(
+            self.login_url,
+            {"username": "testuser", "password": "WrongPassword"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], 4000)
+        self.assertIn("账号/密码错误", body["msg"])
+
+    def test_login_with_nonexistent_user(self):
+        """不存在的账号登录返回预期错误"""
+        response = self.client.post(
+            self.login_url,
+            {"username": "no_such_user", "password": "Test@123456"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["code"], 4000)
+        self.assertIn("您登录的账号不存在", body["msg"])
+
 
 if __name__ == '__main__':
     getMenu()
