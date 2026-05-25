@@ -1,0 +1,649 @@
+diff --git a/backend/application/websocketConfig.py b/backend/application/websocketConfig.py
+index 6c390f8..1f49ba5 100644
+--- a/backend/application/websocketConfig.py
++++ b/backend/application/websocketConfig.py
+@@ -1,9 +1,9 @@
+ # -*- coding: utf-8 -*-
+ import urllib
+ 
+-from asgiref.sync import sync_to_async, async_to_sync
++from asgiref.sync import async_to_sync
+ from channels.db import database_sync_to_async
+-from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
++from channels.generic.websocket import AsyncJsonWebsocketConsumer
+ import json
+ 
+ from channels.layers import get_channel_layer
+@@ -11,14 +11,13 @@ from jwt import InvalidSignatureError
+ from rest_framework.request import Request
+ 
+ from application import settings
+-from dvadmin.system.models import MessageCenter, Users, MessageCenterTargetUser
+-from dvadmin.system.views.message_center import MessageCenterTargetUserSerializer
++from dvadmin.system.models import MessageCenter
++from dvadmin.system.views.message_center import MessageCenterTargetUserSerializer, get_target_user_ids, get_unread_count
+ from dvadmin.utils.serializers import CustomModelSerializer
+ 
+ send_dict = {}
+ 
+ 
+-# 发送消息结构体
+ def set_message(sender, msg_type, msg, unread=0):
+     text = {
+         'sender': sender,
+@@ -29,22 +28,17 @@ def set_message(sender, msg_type, msg, unread=0):
+     return text
+ 
+ 
+-# 异步获取消息中心的目标用户
+ @database_sync_to_async
+ def _get_message_center_instance(message_id):
+-    from dvadmin.system.models import MessageCenter
+-    _MessageCenter = MessageCenter.objects.filter(id=message_id).values_list('target_user', flat=True)
+-    if _MessageCenter:
+-        return _MessageCenter
+-    else:
+-        return []
++    message_center = MessageCenter.objects.filter(id=message_id).values_list('target_user', flat=True).distinct()
++    if message_center:
++        return message_center
++    return []
+ 
+ 
+ @database_sync_to_async
+ def _get_message_unread(user_id):
+-    """获取用户的未读消息数量"""
+-    from dvadmin.system.models import MessageCenterTargetUser
+-    count = MessageCenterTargetUser.objects.filter(users=user_id, is_read=False).count()
++    count = get_unread_count(user_id)
+     return count or 0
+ 
+ 
+@@ -63,26 +57,21 @@ class DvadminWebSocket(AsyncJsonWebsocketConsumer):
+             if decoded_result:
+                 self.user_id = decoded_result.get('user_id')
+                 self.chat_group_name = "user_" + str(self.user_id)
+-                # 收到连接时候处理，
+                 await self.channel_layer.group_add(
+                     self.chat_group_name,
+                     self.channel_name
+                 )
+                 await self.accept()
+-                # 主动推送消息
+                 unread_count = await _get_message_unread(self.user_id)
+                 if unread_count == 0:
+-                    # 发送连接成功
+                     await self.send_json(set_message('system', 'SYSTEM', '您已上线'))
+                 else:
+                     await self.send_json(
+-                        set_message('system', 'SYSTEM', "请查看您的未读消息~",
+-                                    unread=unread_count))
++                        set_message('system', 'SYSTEM', "请查看您的未读消息~", unread=unread_count))
+         except InvalidSignatureError:
+             await self.disconnect(None)
+ 
+     async def disconnect(self, close_code):
+-        # Leave room group
+         await self.channel_layer.group_discard(self.chat_group_name, self.channel_name)
+         print("连接关闭")
+         try:
+@@ -97,7 +86,6 @@ class MegCenter(DvadminWebSocket):
+     """
+ 
+     async def receive(self, text_data):
+-        # 接受客户端的信息，你处理的函数
+         text_data_json = json.loads(text_data)
+         message_id = text_data_json.get('message_id', None)
+         user_list = await _get_message_center_instance(message_id)
+@@ -108,7 +96,6 @@ class MegCenter(DvadminWebSocket):
+             )
+ 
+     async def push_message(self, event):
+-        """消息发送"""
+         message = event['json']
+         await self.send(text_data=json.dumps(message))
+ 
+@@ -154,30 +141,21 @@ def create_message_push(title: str, content: str, target_type: int = 0, target_u
+     message_center_instance = MessageCreateSerializer(data=data, request=request)
+     message_center_instance.is_valid(raise_exception=True)
+     message_center_instance.save()
+-    users = target_user or []
+-    if target_type in [1]:  # 按角色
+-        users = Users.objects.filter(role__id__in=target_role).values_list('id', flat=True)
+-    if target_type in [2]:  # 按部门
+-        users = Users.objects.filter(dept__id__in=target_dept).values_list('id', flat=True)
+-    if target_type in [3]:  # 系统通知
+-        users = Users.objects.values_list('id', flat=True)
++    users = get_target_user_ids(
++        target_type=target_type,
++        target_user=target_user or [],
++        target_dept=target_dept,
++        target_role=target_role
++    )
+     targetuser_data = []
+     for user in users:
+         targetuser_data.append({
+             "messagecenter": message_center_instance.instance.id,
+             "users": user
+         })
+-    targetuser_instance = MessageCenterTargetUserSerializer(data=targetuser_data, many=True, request=request)
+-    targetuser_instance.is_valid(raise_exception=True)
+-    targetuser_instance.save()
++    if targetuser_data:
++        targetuser_instance = MessageCenterTargetUserSerializer(data=targetuser_data, many=True, request=request)
++        targetuser_instance.is_valid(raise_exception=True)
++        targetuser_instance.save()
+     for user in users:
+-        username = "user_" + str(user)
+-        unread_count = async_to_sync(_get_message_unread)(user)
+-        channel_layer = get_channel_layer()
+-        async_to_sync(channel_layer.group_send)(
+-            username,
+-            {
+-                "type": "push.message",
+-                "json": {**message, 'unread': unread_count}
+-            }
+-        )
+\ No newline at end of file
++        websocket_push(user, message={**message, 'unread': get_unread_count(user)})
+diff --git a/backend/dvadmin/system/views/message_center.py b/backend/dvadmin/system/views/message_center.py
+index 52c065f..6763c1a 100644
+--- a/backend/dvadmin/system/views/message_center.py
++++ b/backend/dvadmin/system/views/message_center.py
+@@ -1,12 +1,11 @@
+ # -*- coding: utf-8 -*-
+-import json
+ 
+ from asgiref.sync import async_to_sync
+ from channels.layers import get_channel_layer
+ from django_restql.fields import DynamicSerializerMethodField
+ from rest_framework import serializers
+-from rest_framework.decorators import action, permission_classes
+-from rest_framework.permissions import IsAuthenticated, AllowAny
++from rest_framework.decorators import action
++from rest_framework.permissions import IsAuthenticated
+ 
+ from dvadmin.system.models import MessageCenter, Users, MessageCenterTargetUser
+ from dvadmin.utils.json_response import SuccessResponse, DetailResponse
+@@ -14,6 +13,21 @@ from dvadmin.utils.serializers import CustomModelSerializer
+ from dvadmin.utils.viewset import CustomModelViewSet
+ 
+ 
++def get_unread_count(user_id):
++    return MessageCenterTargetUser.objects.filter(users_id=user_id, is_read=False).count()
++
++
++def get_target_user_ids(target_type, target_user=None, target_dept=None, target_role=None):
++    target_user_ids = target_user or []
++    if target_type == 1:
++        target_user_ids = Users.objects.filter(role__id__in=target_role or []).values_list('id', flat=True).distinct()
++    elif target_type == 2:
++        target_user_ids = Users.objects.filter(dept__id__in=target_dept or []).values_list('id', flat=True).distinct()
++    elif target_type == 3:
++        target_user_ids = Users.objects.values_list('id', flat=True).distinct()
++    return list(dict.fromkeys(int(user_id) for user_id in target_user_ids))
++
++
+ class MessageCenterSerializer(CustomModelSerializer):
+     """
+     消息中心-序列化器
+@@ -21,12 +35,17 @@ class MessageCenterSerializer(CustomModelSerializer):
+     role_info = DynamicSerializerMethodField()
+     user_info = DynamicSerializerMethodField()
+     dept_info = DynamicSerializerMethodField()
+-    is_read = serializers.BooleanField(read_only=True, source='target_user__is_read')
++    is_read = serializers.SerializerMethodField()
++
++    def get_is_read(self, instance):
++        user_id = self.request.user.id
++        relations = MessageCenterTargetUser.objects.filter(messagecenter_id=instance.id, users_id=user_id)
++        if not relations.exists():
++            return False
++        return not relations.filter(is_read=False).exists()
+ 
+     def get_role_info(self, instance, parsed_query):
+         roles = instance.target_role.all()
+-        # You can do what ever you want in here
+-        # `parsed_query` param is passed to BookSerializer to allow further querying
+         from dvadmin.system.views.role import RoleSerializer
+         serializer = RoleSerializer(
+             roles,
+@@ -39,8 +58,6 @@ class MessageCenterSerializer(CustomModelSerializer):
+         if instance.target_type in (1, 2, 3):
+             return []
+         users = instance.target_user.all()
+-        # You can do what ever you want in here
+-        # `parsed_query` param is passed to BookSerializer to allow further querying
+         from dvadmin.system.views.user import UserSerializer
+         serializer = UserSerializer(
+             users,
+@@ -51,8 +68,6 @@ class MessageCenterSerializer(CustomModelSerializer):
+ 
+     def get_dept_info(self, instance, parsed_query):
+         dept = instance.target_dept.all()
+-        # You can do what ever you want in here
+-        # `parsed_query` param is passed to BookSerializer to allow further querying
+         from dvadmin.system.views.dept import DeptSerializer
+         serializer = DeptSerializer(
+             dept,
+@@ -89,16 +104,13 @@ class MessageCenterTargetUserListSerializer(CustomModelSerializer):
+ 
+     def get_is_read(self, instance):
+         user_id = self.request.user.id
+-        message_center_id = instance.id
+-        queryset = MessageCenterTargetUser.objects.filter(messagecenter__id=message_center_id, users_id=user_id).first()
+-        if queryset:
+-            return queryset.is_read
+-        return False
++        relations = MessageCenterTargetUser.objects.filter(messagecenter_id=instance.id, users_id=user_id)
++        if not relations.exists():
++            return False
++        return not relations.filter(is_read=False).exists()
+ 
+     def get_role_info(self, instance, parsed_query):
+         roles = instance.target_role.all()
+-        # You can do what ever you want in here
+-        # `parsed_query` param is passed to BookSerializer to allow further querying
+         from dvadmin.system.views.role import RoleSerializer
+         serializer = RoleSerializer(
+             roles,
+@@ -111,8 +123,6 @@ class MessageCenterTargetUserListSerializer(CustomModelSerializer):
+         if instance.target_type in (1, 2, 3):
+             return []
+         users = instance.target_user.all()
+-        # You can do what ever you want in here
+-        # `parsed_query` param is passed to BookSerializer to allow further querying
+         from dvadmin.system.views.user import UserSerializer
+         serializer = UserSerializer(
+             users,
+@@ -123,8 +133,6 @@ class MessageCenterTargetUserListSerializer(CustomModelSerializer):
+ 
+     def get_dept_info(self, instance, parsed_query):
+         dept = instance.target_dept.all()
+-        # You can do what ever you want in here
+-        # `parsed_query` param is passed to BookSerializer to allow further querying
+         from dvadmin.system.views.dept import DeptSerializer
+         serializer = DeptSerializer(
+             dept,
+@@ -138,10 +146,8 @@ class MessageCenterTargetUserListSerializer(CustomModelSerializer):
+         fields = "__all__"
+         read_only_fields = ["id"]
+ 
++
+ def websocket_push(user_id, message):
+-    """
+-    主动推送消息
+-    """
+     username = "user_" + str(user_id)
+     channel_layer = get_channel_layer()
+     async_to_sync(channel_layer.group_send)(
+@@ -152,6 +158,16 @@ def websocket_push(user_id, message):
+         }
+     )
+ 
++
++def push_unread_message(user_id, content, content_type='SYSTEM'):
++    websocket_push(user_id, message={
++        "sender": 'system',
++        "contentType": content_type,
++        "content": content,
++        "unread": get_unread_count(user_id)
++    })
++
++
+ class MessageCenterCreateSerializer(CustomModelSerializer):
+     """
+     消息中心-新增-序列化器
+@@ -160,30 +176,25 @@ class MessageCenterCreateSerializer(CustomModelSerializer):
+     def save(self, **kwargs):
+         data = super().save(**kwargs)
+         initial_data = self.initial_data
+-        target_type = initial_data.get('target_type')
+-        # 在保存之前,根据目标类型,把目标用户查询出来并保存
+-        users = initial_data.get('target_user', [])
+-        if target_type in [1]:  # 按角色
+-            target_role = initial_data.get('target_role', [])
+-            users = Users.objects.filter(role__id__in=target_role).values_list('id', flat=True)
+-        if target_type in [2]:  # 按部门
+-            target_dept = initial_data.get('target_dept', [])
+-            users = Users.objects.filter(dept__id__in=target_dept).values_list('id', flat=True)
+-        if target_type in [3]:  # 系统通知
+-            users = Users.objects.values_list('id', flat=True)
++        target_type = int(initial_data.get('target_type', data.target_type or 0))
++        users = get_target_user_ids(
++            target_type=target_type,
++            target_user=initial_data.get('target_user', []),
++            target_dept=initial_data.get('target_dept', []),
++            target_role=initial_data.get('target_role', [])
++        )
+         targetuser_data = []
+         for user in users:
+             targetuser_data.append({
+                 "messagecenter": data.id,
+                 "users": user
+             })
+-        targetuser_instance = MessageCenterTargetUserSerializer(data=targetuser_data, many=True, request=self.request)
+-        targetuser_instance.is_valid(raise_exception=True)
+-        targetuser_instance.save()
++        if targetuser_data:
++            targetuser_instance = MessageCenterTargetUserSerializer(data=targetuser_data, many=True, request=self.request)
++            targetuser_instance.is_valid(raise_exception=True)
++            targetuser_instance.save()
+         for user in users:
+-            unread_count = MessageCenterTargetUser.objects.filter(users__id=user, is_read=False).count()
+-            websocket_push(user, message={"sender": 'system', "contentType": 'SYSTEM',
+-                                          "content": '您有一条新消息~', "unread": unread_count})
++            push_unread_message(user, '您有一条新消息~')
+         return data
+ 
+     class Meta:
+@@ -212,32 +223,21 @@ class MessageCenterViewSet(CustomModelViewSet):
+         return MessageCenter.objects.all()
+ 
+     def retrieve(self, request, *args, **kwargs):
+-        """
+-        重写查看
+-        """
+         pk = kwargs.get('pk')
+         user_id = self.request.user.id
+-        queryset = MessageCenterTargetUser.objects.filter(users__id=user_id, messagecenter__id=pk).first()
+-        if queryset:
+-            queryset.is_read = True
+-            queryset.save()
++        unread_relations = MessageCenterTargetUser.objects.filter(users_id=user_id, messagecenter_id=pk, is_read=False)
++        for relation in unread_relations:
++            relation.is_read = True
++            relation.save(update_fields=['is_read'])
+         instance = self.get_object()
+-        serializer = self.get_serializer(instance)
+-        # 主动推送消息
+-        unread_count = MessageCenterTargetUser.objects.filter(users__id=user_id, is_read=False).count()
+-        websocket_push(user_id, message={"sender": 'system', "contentType": 'TEXT',
+-                                         "content": '您查看了一条消息~', "unread": unread_count})
++        serializer = MessageCenterTargetUserListSerializer(instance, many=False, request=request)
++        push_unread_message(user_id, '您查看了一条消息~', 'TEXT')
+         return DetailResponse(data=serializer.data, msg="获取成功")
+ 
+     @action(methods=['GET'], detail=False, permission_classes=[IsAuthenticated])
+     def get_self_receive(self, request):
+-        """
+-        获取接收到的消息
+-        """
+         self_user_id = self.request.user.id
+-        # queryset = MessageCenterTargetUser.objects.filter(users__id=self_user_id).order_by('-create_datetime')
+-        queryset = MessageCenter.objects.filter(target_user__id=self_user_id)
+-        # queryset = self.filter_queryset(queryset)
++        queryset = MessageCenter.objects.filter(target_user__id=self_user_id).distinct().order_by('-create_datetime')
+         page = self.paginate_queryset(queryset)
+         if page is not None:
+             serializer = MessageCenterTargetUserListSerializer(page, many=True, request=request)
+@@ -247,13 +247,14 @@ class MessageCenterViewSet(CustomModelViewSet):
+ 
+     @action(methods=['GET'], detail=False, permission_classes=[IsAuthenticated])
+     def get_newest_msg(self, request):
+-        """
+-        获取最新的一条消息
+-        """
+         self_user_id = self.request.user.id
+-        queryset = MessageCenterTargetUser.objects.filter(users__id=self_user_id).order_by('create_datetime').last()
++        queryset = MessageCenterTargetUser.objects.filter(users_id=self_user_id).order_by('create_datetime').last()
+         data = None
+         if queryset:
+             serializer = MessageCenterTargetUserListSerializer(queryset.messagecenter, many=False, request=request)
+             data = serializer.data
+         return DetailResponse(data=data, msg="获取成功")
++
++    @action(methods=['GET'], detail=False, permission_classes=[IsAuthenticated])
++    def unread_count(self, request):
++        return DetailResponse(data={"unread": get_unread_count(request.user.id)}, msg="获取成功")
+diff --git a/web/src/utils/websocket.ts b/web/src/utils/websocket.ts
+index 2fabadb..314b401 100644
+--- a/web/src/utils/websocket.ts
++++ b/web/src/utils/websocket.ts
+@@ -1,118 +1,133 @@
+-import {ElNotification  as message} from 'element-plus'
+-import {Session} from "/@/utils/storage";
+-import {getWsBaseURL} from "/@/utils/baseUrl";
++import { ElNotification as message } from 'element-plus'
++import { Session } from '/@/utils/storage';
++import { getWsBaseURL } from '/@/utils/baseUrl';
+ // @ts-ignore
+ import socket from '@/types/api/socket'
+-import {useUserInfo} from "/@/stores/userInfo";
+-const websocket: socket = {
+-    websocket: null,
+-    connectURL: getWsBaseURL(),
+-    // 开启标识
+-    socket_open: false,
+-    // 心跳timer
+-    hearbeat_timer: null,
+-    // 心跳发送频率
+-    hearbeat_interval: 2 * 1000,
+-    // 是否自动重连
+-    is_reonnect: true,
+-    // 重连次数
+-    reconnect_count: 3,
+-    // 已发起重连次数
+-    reconnect_current: 1,
+-    // 重连timer
+-    reconnect_timer: null,
+-    // 重连频率
+-    reconnect_interval: 5 * 1000,
+-    init: (receiveMessage: Function | null) => {
+-        if (!('WebSocket' in window)) {
+-            message.warning('浏览器不支持WebSocket')
+-            return null
+-        }
+-        const token = Session.get('token')
+-        if(!token){
+-            // message.warning('websocket认证失败')
+-            return null
+-        }
+-        const wsUrl = `${getWsBaseURL()}ws/${token}/`
+-        websocket.websocket = new WebSocket(wsUrl)
+-        websocket.websocket.onmessage = (e: any) => {
+-            if (receiveMessage) {
+-                receiveMessage(e)
+-            }
+-        }
+-        websocket.websocket.onclose = (e: any) => {
+-            websocket.socket_open = false
+-            useUserInfo().setWebSocketState(websocket.socket_open);
+-            // 需要重新连接
+-            if (websocket.is_reonnect) {
+-                websocket.reconnect_timer = setTimeout(() => {
+-                    // 超过重连次数
+-                    if (websocket.reconnect_current > websocket.reconnect_count) {
+-                        clearTimeout(websocket.reconnect_timer)
+-                        websocket.is_reonnect = false
+-                        websocket.socket_open = false
+-                        useUserInfo().setWebSocketState(websocket.socket_open);
+-                        return
+-                    }
+-                    // 记录重连次数
+-                    websocket.reconnect_current++
+-                    websocket.reconnect()
+-                }, websocket.reconnect_interval)
+-            }
+-        }
+-        // 连接成功
+-        websocket.websocket.onopen = function () {
+-            websocket.socket_open = true
+-            useUserInfo().setWebSocketState(websocket.socket_open);
+-            websocket.is_reonnect = true
+-            // 开启心跳
+-            websocket.heartbeat()
+-        }
+-        // 连接发生错误
+-        websocket.websocket.onerror = function () { }
+-    },
+-    heartbeat: () => {
+-        websocket.hearbeat_timer && clearInterval(websocket.hearbeat_timer)
++import { useUserInfo } from '/@/stores/userInfo';
++
++const setSocketState = (isOpen: boolean) => {
++	websocket.socket_open = isOpen
++	useUserInfo().setWebSocketState(isOpen);
++}
++
++const clearHeartbeatTimer = () => {
++	if (websocket.hearbeat_timer) {
++		clearInterval(websocket.hearbeat_timer)
++		websocket.hearbeat_timer = null
++	}
++}
++
++const clearReconnectTimer = () => {
++	if (websocket.reconnect_timer) {
++		clearTimeout(websocket.reconnect_timer)
++		websocket.reconnect_timer = null
++	}
++}
+ 
+-        websocket.hearbeat_timer = setInterval(() => {
+-            let data = {
+-                token: Session.get('token')
+-            }
+-            websocket.send(data)
+-        }, websocket.hearbeat_interval)
+-    },
+-    send: (data:string, callback = null) => {
+-        // 开启状态直接发送
+-        if (websocket.websocket.readyState === websocket.websocket.OPEN) {
+-            websocket.websocket.send(JSON.stringify(data))
+-            // @ts-ignore
+-            callback && callback()
+-        } else {
+-            clearInterval(websocket.hearbeat_timer)
+-            // message({
+-            //     type: 'warning',
+-            //     message: 'socket链接已断开',
+-            //     duration: 1000,
+-            // })
+-            websocket.socket_open = false
+-            useUserInfo().setWebSocketState(websocket.socket_open);
+-        }
+-    },
+-    close: () => {
+-        websocket.is_reonnect = false
+-        websocket.websocket.close()
+-        websocket.websocket = null;
+-        websocket.socket_open = false
+-        useUserInfo().setWebSocketState(websocket.socket_open);
+-    },
+-    /**
+-     * 重新连接
+-     */
+-    reconnect: () => {
+-        if (websocket.websocket && !websocket.is_reonnect) {
+-            websocket.close()
+-        }
+-        websocket.init(null)
+-    },
++const websocket: socket = {
++	websocket: null,
++	connectURL: getWsBaseURL(),
++	socket_open: false,
++	hearbeat_timer: null,
++	hearbeat_interval: 2 * 1000,
++	is_reonnect: true,
++	reconnect_count: 3,
++	reconnect_current: 1,
++	reconnect_timer: null,
++	reconnect_interval: 5 * 1000,
++	receiveMessage: null,
++	init: (receiveMessage: Function | null) => {
++		if (receiveMessage) {
++			websocket.receiveMessage = receiveMessage
++		}
++		if (!('WebSocket' in window)) {
++			message.warning('浏览器不支持WebSocket')
++			return null
++		}
++		const token = Session.get('token')
++		if (!token) {
++			return null
++		}
++		if (websocket.websocket) {
++			const { readyState } = websocket.websocket
++			if (readyState === WebSocket.OPEN || readyState === WebSocket.CONNECTING) {
++				return websocket.websocket
++			}
++		}
++		clearReconnectTimer()
++		const wsUrl = `${getWsBaseURL()}ws/${token}/`
++		const currentSocket = new WebSocket(wsUrl)
++		websocket.websocket = currentSocket
++		currentSocket.onmessage = (e: any) => {
++			if (websocket.receiveMessage) {
++				websocket.receiveMessage(e)
++			}
++		}
++		currentSocket.onclose = () => {
++			if (websocket.websocket === currentSocket) {
++				websocket.websocket = null
++			}
++			clearHeartbeatTimer()
++			setSocketState(false)
++			if (!websocket.is_reonnect || websocket.reconnect_timer) {
++				return
++			}
++			websocket.reconnect_timer = setTimeout(() => {
++				websocket.reconnect_timer = null
++				if (websocket.reconnect_current > websocket.reconnect_count) {
++					websocket.is_reonnect = false
++					setSocketState(false)
++					return
++				}
++				websocket.reconnect_current += 1
++				websocket.reconnect()
++			}, websocket.reconnect_interval)
++		}
++		currentSocket.onopen = () => {
++			clearReconnectTimer()
++			websocket.reconnect_current = 1
++			websocket.is_reonnect = true
++			setSocketState(true)
++			websocket.heartbeat()
++		}
++		currentSocket.onerror = () => {}
++		return currentSocket
++	},
++	heartbeat: () => {
++		clearHeartbeatTimer()
++		websocket.hearbeat_timer = setInterval(() => {
++			const data = {
++				token: Session.get('token')
++			}
++			websocket.send(data)
++		}, websocket.hearbeat_interval)
++	},
++	send: (data: string, callback = null) => {
++		if (websocket.websocket && websocket.websocket.readyState === WebSocket.OPEN) {
++			websocket.websocket.send(JSON.stringify(data))
++			// @ts-ignore
++			callback && callback()
++		} else {
++			clearHeartbeatTimer()
++			setSocketState(false)
++		}
++	},
++	close: () => {
++		websocket.is_reonnect = false
++		clearReconnectTimer()
++		clearHeartbeatTimer()
++		if (websocket.websocket) {
++			const currentSocket = websocket.websocket
++			websocket.websocket = null
++			currentSocket.close()
++		}
++		setSocketState(false)
++	},
++	reconnect: () => {
++		if (websocket.websocket && websocket.websocket.readyState === WebSocket.OPEN) {
++			return websocket.websocket
++		}
++		return websocket.init(websocket.receiveMessage)
++	},
+ }
+ export default websocket;
