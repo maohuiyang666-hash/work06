@@ -1,0 +1,245 @@
+diff --git a/backend/application/settings.py b/backend/application/settings.py
+index 71ed7d5..8335b4d 100644
+--- a/backend/application/settings.py
++++ b/backend/application/settings.py
+@@ -22,7 +22,46 @@ BASE_DIR = Path(__file__).resolve().parent.parent
+ # ******************** 动态配置 ******************** #
+ # ================================================= #
+ 
+-from conf.env import *
++from dotenv import load_dotenv
++
++# 根据 APP_ENV 环境变量加载对应的 .env 文件，默认 development
++APP_ENV = os.environ.get("APP_ENV", "development")
++env_file = os.path.join(BASE_DIR.parent, f".env.{APP_ENV}")
++if os.path.exists(env_file):
++    load_dotenv(env_file)
++else:
++    load_dotenv(os.path.join(BASE_DIR.parent, ".env.development"))
++
++DATABASE_ENGINE = os.environ.get("DATABASE_ENGINE", os.environ.get("APP_DB_ENGINE", "django.db.backends.mysql"))
++DATABASE_NAME = os.environ.get("DATABASE_NAME", os.environ.get("APP_DB_NAME", "django-vue3-admin"))
++DATABASE_HOST = os.environ.get("DATABASE_HOST", os.environ.get("APP_DB_HOST", "127.0.0.1"))
++DATABASE_PORT = int(os.environ.get("DATABASE_PORT", os.environ.get("APP_DB_PORT", "3306")))
++DATABASE_USER = os.environ.get("DATABASE_USER", os.environ.get("APP_DB_USER", "root"))
++DATABASE_PASSWORD = os.environ.get("DATABASE_PASSWORD", os.environ.get("APP_DB_PASSWORD", "DVADMIN3"))
++TABLE_PREFIX = os.environ.get("APP_TABLE_PREFIX", "dvadmin_")
++
++REDIS_URL = os.environ.get("REDIS_URL", os.environ.get("APP_REDIS_URL", "redis://:DVADMIN3@127.0.0.1:6379/1"))
++CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", os.environ.get("APP_CELERY_BROKER_URL", "redis://:DVADMIN3@127.0.0.1:6379/3"))
++# 为了兼容可能使用到以下变量的地方，也一并定义
++REDIS_PASSWORD = os.environ.get("APP_REDIS_PASSWORD", "DVADMIN3")
++REDIS_HOST = os.environ.get("APP_REDIS_HOST", "127.0.0.1")
++REDIS_DB = int(os.environ.get("APP_REDIS_DB", "1"))
++CELERY_BROKER_DB = int(os.environ.get("APP_CELERY_BROKER_DB", "3"))
++
++DEBUG = os.environ.get("APP_DEBUG", "True").lower() == "true"
++ALLOWED_HOSTS = os.environ.get("APP_ALLOWED_HOSTS", "*").split(",")
++CORS_ORIGIN_ALLOW_ALL = os.environ.get("APP_CORS_ALLOW_ALL", "True").lower() == "true"
++
++LOGIN_NO_CAPTCHA_AUTH = not (os.environ.get("APP_CAPTCHA_ENABLED", "True").lower() == "true")
++ENABLE_LOGIN_ANALYSIS_LOG = os.environ.get("APP_ENABLE_LOGIN_ANALYSIS_LOG", "True").lower() == "true"
++STATIC_URL = os.environ.get("APP_STATIC_URL", "/static/")
++MEDIA_URL = os.environ.get("APP_MEDIA_URL", "/media/")
++
++# 兼容本地的旧配置
++try:
++    from conf.env import *
++except ImportError:
++    pass
+ 
+ # Quick-start development settings - unsuitable for production
+ # See https://docs.djangoproject.com/en/3.2/howto/deployment/checklist/
+@@ -146,7 +185,7 @@ USE_TZ = False
+ # Static files (CSS, JavaScript, Images)
+ # https://docs.djangoproject.com/en/3.2/howto/static-files/
+ 
+-STATIC_URL = "/static/"
++# STATIC_URL = "/static/"
+ # # 设置django的静态文件目录
+ STATICFILES_DIRS = [
+     os.path.join(BASE_DIR, "static"),
+@@ -388,7 +427,7 @@ ALL_MODELS_OBJECTS = []  # 所有app models 对象
+ INITIALIZE_LIST = []
+ INITIALIZE_RESET_LIST = []
+ # 表前缀
+-TABLE_PREFIX = locals().get('TABLE_PREFIX', "")
++TABLE_PREFIX = locals().get('TABLE_PREFIX', os.environ.get("APP_TABLE_PREFIX", "dvadmin_"))
+ # 系统配置
+ SYSTEM_CONFIG = {}
+ # 字典配置
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index f443f6f..7c340ea 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -30,4 +30,5 @@ Pillow==10.4.0
+ pyinstaller==6.9.0
+ dvadmin3-celery==3.1.6
+ oss2==2.19.1
+-cos-python-sdk-v5==1.9.37
+\ No newline at end of file
++cos-python-sdk-v5==1.9.37
++python-dotenv==1.0.0
+\ No newline at end of file
+diff --git a/web/.env b/web/.env
+deleted file mode 100644
+index a77f485..0000000
+--- a/web/.env
++++ /dev/null
+@@ -1,8 +0,0 @@
+-# port 端口号
+-VITE_PORT = 8080
+-VITE_API_URL = 'http://127.0.0.1:8000'
+-# open 运行 npm run dev 时自动打开浏览器
+-VITE_OPEN = false
+-
+-# public path 配置线上环境路径（打包）、本地通过 http-server 访问时，请置空即可
+-VITE_PUBLIC_PATH = /
+diff --git a/web/.env.development b/web/.env.development
+deleted file mode 100644
+index fc47d19..0000000
+--- a/web/.env.development
++++ /dev/null
+@@ -1,10 +0,0 @@
+-# 本地环境
+-ENV = 'development'
+-VITE_PORT = 8080
+-VITE_API_URL = 'http://127.0.0.1:8000'
+-# open 运行 npm run dev 时自动打开浏览器
+-VITE_OPEN = false
+-
+-
+-# 是否启用按钮权限
+-VITE_PM_ENABLED = true
+diff --git a/web/.env.local_prod b/web/.env.local_prod
+deleted file mode 100644
+index dad4103..0000000
+--- a/web/.env.local_prod
++++ /dev/null
+@@ -1,11 +0,0 @@
+-# 线上环境
+-ENV = 'local_prod'
+-
+-# 线上环境接口地址
+-VITE_API_URL = '/'
+-
+-# 是否启用按钮权限
+-VITE_PM_ENABLED = true
+-VITE_PUBLIC_PATH = /web/
+-# dist目录
+-VITE_DIST_PATH =../backend/templates/web/
+\ No newline at end of file
+diff --git a/web/.env.production b/web/.env.production
+deleted file mode 100644
+index 998aa5e..0000000
+--- a/web/.env.production
++++ /dev/null
+@@ -1,8 +0,0 @@
+-# 线上环境
+-ENV = 'production'
+-
+-# 线上环境接口地址
+-VITE_API_URL = '/api' # docker-compose部署不需要修改，nginx容器自动代理了这个地址
+-
+-# 是否启用按钮权限
+-VITE_PM_ENABLED = true
+diff --git a/web/package.json b/web/package.json
+index 113381b..9a1e532 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -6,6 +6,7 @@
+ 	"scripts": {
+ 		"dev": "vite --force",
+ 		"build:dev": "vite build --mode development",
++		"build:test": "vite build --mode test",
+ 		"build": "vite build",
+ 		"build:local": "vite build --mode local_prod",
+ 		"lint-fix": "eslint --fix --ext .js --ext .jsx --ext .vue src/",
+diff --git a/web/shim.d.ts b/web/shim.d.ts
+index 3e9bfd0..7373405 100644
+--- a/web/shim.d.ts
++++ b/web/shim.d.ts
+@@ -11,3 +11,13 @@ declare module '*.vue' {
+ interface Window {
+ 	nextLoading: boolean;
+ }
++
++interface ImportMetaEnv {
++	readonly APP_ENV: string;
++	readonly APP_API_URL: string;
++	readonly APP_WS_URL: string;
++}
++
++interface ImportMeta {
++	readonly env: ImportMetaEnv;
++}
+diff --git a/web/src/main.ts b/web/src/main.ts
+index 0ec8a6b..b67d847 100644
+--- a/web/src/main.ts
++++ b/web/src/main.ts
+@@ -42,6 +42,9 @@ iconList.addIcon(fontAwesome470); // 添加fontAwesome 470版本的图标
+ 
+ let app = createApp(App);
+ 
++console.log('Current Environment:', import.meta.env.APP_ENV);
++console.log('API URL:', import.meta.env.APP_API_URL);
++
+ scanAndInstallPlugins(app);
+ 
+ app.use(eIconPicker, {
+diff --git a/web/src/utils/baseUrl.ts b/web/src/utils/baseUrl.ts
+index 6b55c27..ad1ccd3 100644
+--- a/web/src/utils/baseUrl.ts
++++ b/web/src/utils/baseUrl.ts
+@@ -4,7 +4,7 @@ import { pluginsAll } from '/@/views/plugins/index';
+  * @description 校验是否为租户模式。租户模式把域名替换成 域名 加端口
+  */
+ export const getBaseURL = function (url: null | string = null, isHost: null | boolean = null) {
+-	let baseURL = import.meta.env.VITE_API_URL as any;
++	let baseURL = import.meta.env.APP_API_URL as any;
+ 	// 如果需要host返回，时，返回地址前缀加http地址
+ 	if (isHost && !baseURL.startsWith('http')) {
+ 		baseURL = window.location.protocol + '//' + window.location.host + baseURL
+@@ -46,7 +46,10 @@ export const getBaseURL = function (url: null | string = null, isHost: null | bo
+ };
+ 
+ export const getWsBaseURL = function () {
+-	let baseURL = import.meta.env.VITE_API_URL as any;
++	let baseURL = import.meta.env.APP_WS_URL as any;
++	if (!baseURL) {
++		baseURL = import.meta.env.APP_API_URL as any;
++	}
+ 	let param = baseURL.split('/')[3] || '';
+ 	// @ts-ignore
+ 	if (pluginsAll && pluginsAll.indexOf('dvadmin3-tenants-web') !== -1 && (!param || baseURL.startsWith('/'))) {
+diff --git a/web/src/utils/request.ts b/web/src/utils/request.ts
+index 08e6184..2dcac59 100644
+--- a/web/src/utils/request.ts
++++ b/web/src/utils/request.ts
+@@ -5,7 +5,7 @@ import qs from 'qs';
+ 
+ // 配置新建一个 axios 实例
+ const service: AxiosInstance = axios.create({
+-	baseURL: import.meta.env.VITE_API_URL,
++	baseURL: import.meta.env.APP_API_URL,
+ 	timeout: 50000,
+ 	headers: { 'Content-Type': 'application/json' },
+ 	paramsSerializer: {
+diff --git a/web/vite.config.ts b/web/vite.config.ts
+index 2681338..5090919 100644
+--- a/web/vite.config.ts
++++ b/web/vite.config.ts
+@@ -18,10 +18,12 @@ const alias: Record<string, string> = {
+ };
+ 
+ const viteConfig = defineConfig((mode: ConfigEnv) => {
+-	const env = loadEnv(mode.mode, process.cwd());
++	const env = loadEnv(mode.mode, process.cwd(), ['VITE_', 'APP_']);
+ 	// 当Vite构建时，生成版本文件
+ 	generateVersionFile()
+ 	return {
++		envDir: '../',
++		envPrefix: ['VITE_', 'APP_'],
+ 		plugins: [vue(), /* vueJsx(), */ vueSetupExtend()],
+ 		root: process.cwd(),
+ 		resolve: { alias },

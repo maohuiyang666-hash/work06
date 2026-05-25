@@ -42,6 +42,9 @@ iconList.addIcon(fontAwesome470); // 添加fontAwesome 470版本的图标
 
 let app = createApp(App);
 
+console.log('Current Environment:', import.meta.env.APP_ENV);
+console.log('API URL:', import.meta.env.APP_API_URL);
+
 scanAndInstallPlugins(app);
 
 app.use(eIconPicker, {

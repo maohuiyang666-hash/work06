@@ -11,3 +11,13 @@ declare module '*.vue' {
 interface Window {
 	nextLoading: boolean;
 }
+
+interface ImportMetaEnv {
+	readonly APP_ENV: string;
+	readonly APP_API_URL: string;
+	readonly APP_WS_URL: string;
+}
+
+interface ImportMeta {
+	readonly env: ImportMetaEnv;
+}

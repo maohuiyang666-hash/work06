@@ -4,7 +4,7 @@ import { pluginsAll } from '/@/views/plugins/index';
  * @description 校验是否为租户模式。租户模式把域名替换成 域名 加端口
  */
 export const getBaseURL = function (url: null | string = null, isHost: null | boolean = null) {
-	let baseURL = import.meta.env.VITE_API_URL as any;
+	let baseURL = import.meta.env.APP_API_URL as any;
 	// 如果需要host返回，时，返回地址前缀加http地址
 	if (isHost && !baseURL.startsWith('http')) {
 		baseURL = window.location.protocol + '//' + window.location.host + baseURL
@@ -46,7 +46,10 @@ export const getBaseURL = function (url: null | string = null, isHost: null | bo
 };
 
 export const getWsBaseURL = function () {
-	let baseURL = import.meta.env.VITE_API_URL as any;
+	let baseURL = import.meta.env.APP_WS_URL as any;
+	if (!baseURL) {
+		baseURL = import.meta.env.APP_API_URL as any;
+	}
 	let param = baseURL.split('/')[3] || '';
 	// @ts-ignore
 	if (pluginsAll && pluginsAll.indexOf('dvadmin3-tenants-web') !== -1 && (!param || baseURL.startsWith('/'))) {

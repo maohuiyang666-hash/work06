@@ -22,7 +22,46 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ******************** 动态配置 ******************** #
 # ================================================= #
 
-from conf.env import *
+from dotenv import load_dotenv
+
+# 根据 APP_ENV 环境变量加载对应的 .env 文件，默认 development
+APP_ENV = os.environ.get("APP_ENV", "development")
+env_file = os.path.join(BASE_DIR.parent, f".env.{APP_ENV}")
+if os.path.exists(env_file):
+    load_dotenv(env_file)
+else:
+    load_dotenv(os.path.join(BASE_DIR.parent, ".env.development"))
+
+DATABASE_ENGINE = os.environ.get("DATABASE_ENGINE", os.environ.get("APP_DB_ENGINE", "django.db.backends.mysql"))
+DATABASE_NAME = os.environ.get("DATABASE_NAME", os.environ.get("APP_DB_NAME", "django-vue3-admin"))
+DATABASE_HOST = os.environ.get("DATABASE_HOST", os.environ.get("APP_DB_HOST", "127.0.0.1"))
+DATABASE_PORT = int(os.environ.get("DATABASE_PORT", os.environ.get("APP_DB_PORT", "3306")))
+DATABASE_USER = os.environ.get("DATABASE_USER", os.environ.get("APP_DB_USER", "root"))
+DATABASE_PASSWORD = os.environ.get("DATABASE_PASSWORD", os.environ.get("APP_DB_PASSWORD", "DVADMIN3"))
+TABLE_PREFIX = os.environ.get("APP_TABLE_PREFIX", "dvadmin_")
+
+REDIS_URL = os.environ.get("REDIS_URL", os.environ.get("APP_REDIS_URL", "redis://:DVADMIN3@127.0.0.1:6379/1"))
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", os.environ.get("APP_CELERY_BROKER_URL", "redis://:DVADMIN3@127.0.0.1:6379/3"))
+# 为了兼容可能使用到以下变量的地方，也一并定义
+REDIS_PASSWORD = os.environ.get("APP_REDIS_PASSWORD", "DVADMIN3")
+REDIS_HOST = os.environ.get("APP_REDIS_HOST", "127.0.0.1")
+REDIS_DB = int(os.environ.get("APP_REDIS_DB", "1"))
+CELERY_BROKER_DB = int(os.environ.get("APP_CELERY_BROKER_DB", "3"))
+
+DEBUG = os.environ.get("APP_DEBUG", "True").lower() == "true"
+ALLOWED_HOSTS = os.environ.get("APP_ALLOWED_HOSTS", "*").split(",")
+CORS_ORIGIN_ALLOW_ALL = os.environ.get("APP_CORS_ALLOW_ALL", "True").lower() == "true"
+
+LOGIN_NO_CAPTCHA_AUTH = not (os.environ.get("APP_CAPTCHA_ENABLED", "True").lower() == "true")
+ENABLE_LOGIN_ANALYSIS_LOG = os.environ.get("APP_ENABLE_LOGIN_ANALYSIS_LOG", "True").lower() == "true"
+STATIC_URL = os.environ.get("APP_STATIC_URL", "/static/")
+MEDIA_URL = os.environ.get("APP_MEDIA_URL", "/media/")
+
+# 兼容本地的旧配置
+try:
+    from conf.env import *
+except ImportError:
+    pass
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/3.2/howto/deployment/checklist/
@@ -146,7 +185,7 @@ USE_TZ = False
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.2/howto/static-files/
 
-STATIC_URL = "/static/"
+# STATIC_URL = "/static/"
 # # 设置django的静态文件目录
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, "static"),
@@ -388,7 +427,7 @@ ALL_MODELS_OBJECTS = []  # 所有app models 对象
 INITIALIZE_LIST = []
 INITIALIZE_RESET_LIST = []
 # 表前缀
-TABLE_PREFIX = locals().get('TABLE_PREFIX', "")
+TABLE_PREFIX = locals().get('TABLE_PREFIX', os.environ.get("APP_TABLE_PREFIX", "dvadmin_"))
 # 系统配置
 SYSTEM_CONFIG = {}
 # 字典配置

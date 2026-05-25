@@ -18,10 +18,12 @@ const alias: Record<string, string> = {
 };
 
 const viteConfig = defineConfig((mode: ConfigEnv) => {
-	const env = loadEnv(mode.mode, process.cwd());
+	const env = loadEnv(mode.mode, process.cwd(), ['VITE_', 'APP_']);
 	// 当Vite构建时，生成版本文件
 	generateVersionFile()
 	return {
+		envDir: '../',
+		envPrefix: ['VITE_', 'APP_'],
 		plugins: [vue(), /* vueJsx(), */ vueSetupExtend()],
 		root: process.cwd(),
 		resolve: { alias },
