@@ -57,29 +57,21 @@ export const useUserInfo = defineStore('userInfo', {
 			if (Session.get('userInfo')) {
 				this.userInfos = Session.get('userInfo');
 			} else {
-				let userInfos: any = await this.getApiUserInfo();
-				this.userInfos.id = userInfos.id;
-				this.userInfos.username = userInfos.data.name;
-				this.userInfos.avatar = userInfos.data.avatar;
-				this.userInfos.name = userInfos.data.name;
-				this.userInfos.email = userInfos.data.email;
-				this.userInfos.mobile = userInfos.data.mobile;
-				this.userInfos.gender = userInfos.data.gender;
-				this.userInfos.dept_info = userInfos.data.dept_info;
-				this.userInfos.role_info = userInfos.data.role_info;
-				this.userInfos.pwd_change_count = userInfos.data.pwd_change_count;
-				this.userInfos.is_superuser = userInfos.data.is_superuser;
-				Session.set('userInfo', this.userInfos);
+				await this.getApiUserInfo();
 			}
 		},
 		async setWebSocketState(socketState: boolean) {
 			this.isSocketOpen = socketState;
 		},
 		async getApiUserInfo() {
-			return request({
-				url: '/api/system/user/user_info/',
-				method: 'get',
-			}).then((res:any)=>{
+			try {
+				const res = await request({
+					url: '/api/system/user/user_info/',
+					method: 'get',
+				});
+				if (!res || !res.data) {
+					throw new Error('获取用户信息失败');
+				}
 				this.userInfos.id = res.data.id;
 				this.userInfos.username = res.data.name;
 				this.userInfos.avatar = (res.data.avatar && getBaseURL(res.data.avatar)) || headerImage;
@@ -92,7 +84,12 @@ export const useUserInfo = defineStore('userInfo', {
 				this.userInfos.pwd_change_count = res.data.pwd_change_count;
 				this.userInfos.is_superuser = res.data.is_superuser;
 				Session.set('userInfo', this.userInfos);
-			})
+				return res.data;
+			} catch (error) {
+				console.error('获取用户信息失败:', error);
+				Session.remove('userInfo');
+				throw error;
+			}
 		},
 	},
 });

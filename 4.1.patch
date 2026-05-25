@@ -1,0 +1,362 @@
+diff --git a/web/src/router/backEnd.ts b/web/src/router/backEnd.ts
+index 4b45623..0440ec5 100644
+--- a/web/src/router/backEnd.ts
++++ b/web/src/router/backEnd.ts
+@@ -39,25 +39,33 @@ const dynamicViewsModules: Record<string, Function> = Object.assign({}, { ...lay
+  * @method setFilterMenuAndCacheTagsViewRoutes 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
+  */
+ export async function initBackEndControlRoutes() {
+-	// 界面 loading 动画开始执行
+-	if (window.nextLoading === undefined) NextLoading.start();
+-	// 无 token 停止执行下一步
+-	if (!Session.get('token')) return false;
+-	// 触发初始化用户信息 pinia
+-	// https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
+-	await useUserInfo().getApiUserInfo();
+-	// 获取路由菜单数据
+-	const res = await getBackEndControlRoutes();
+-	// 无登录权限时，添加判断
+-	// https://gitee.com/lyt-top/vue-next-admin/issues/I64HVO
+-	// if (res.data.length <= 0) return Promise.resolve(true);
+-	// 处理路由（component），替换 dynamicRoutes（/@/router/route）第一个顶级 children 的路由
+-	const {frameIn,frameOut} = handleMenu(res.data)
+-	dynamicRoutes[0].children = await backEndComponent(frameIn);
+-	// 添加动态路由
+-	await setAddRoute();
+-	// 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
+-	await setFilterMenuAndCacheTagsViewRoutes();
++	try {
++		// 界面 loading 动画开始执行
++		if (window.nextLoading === undefined) NextLoading.start();
++		// 无 token 停止执行下一步
++		if (!Session.get('token')) return false;
++		// 触发初始化用户信息 pinia
++		await useUserInfo().getApiUserInfo();
++		// 获取路由菜单数据
++		const res = await getBackEndControlRoutes();
++		if (!res || !res.data) {
++			throw new Error('获取路由菜单失败');
++		}
++		// 处理路由（component），替换 dynamicRoutes（/@/router/route）第一个顶级 children 的路由
++		const { frameIn, frameOut } = handleMenu(res.data)
++		dynamicRoutes[0].children = await backEndComponent(frameIn);
++		// 添加动态路由
++		await setAddRoute();
++		// 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
++		await setFilterMenuAndCacheTagsViewRoutes();
++		return true;
++	} catch (error) {
++		console.error('初始化后端路由失败:', error);
++		// 清除 token 和用户信息
++		Session.clear();
++		// 返回 false 表示初始化失败
++		return false;
++	}
+ }
+ 
+ export async function setRouters(){
+diff --git a/web/src/router/frontEnd.ts b/web/src/router/frontEnd.ts
+index 21337b6..de61f77 100644
+--- a/web/src/router/frontEnd.ts
++++ b/web/src/router/frontEnd.ts
+@@ -19,20 +19,23 @@ import { NextLoading } from '/@/utils/loading';
+  * @method setFilterMenuAndCacheTagsViewRoutes 设置递归过滤有权限的路由到 pinia routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
+  */
+ export async function initFrontEndControlRoutes() {
+-	// 界面 loading 动画开始执行
+-	if (window.nextLoading === undefined) NextLoading.start();
+-	// 无 token 停止执行下一步
+-	if (!Session.get('token')) return false;
+-	// 触发初始化用户信息 pinia
+-	// https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
+-	await useUserInfo(pinia).setUserInfos();
+-	// 无登录权限时，添加判断
+-	// https://gitee.com/lyt-top/vue-next-admin/issues/I64HVO
+-	if (useUserInfo().userInfos.roles.length <= 0) return Promise.resolve(true);
+-	// 添加动态路由
+-	await setAddRoute();
+-	// 设置递归过滤有权限的路由到 pinia routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
+-	await setFilterMenuAndCacheTagsViewRoutes();
++	try {
++		// 界面 loading 动画开始执行
++		if (window.nextLoading === undefined) NextLoading.start();
++		// 无 token 停止执行下一步
++		if (!Session.get('token')) return false;
++		// 触发初始化用户信息 pinia
++		await useUserInfo(pinia).setUserInfos();
++		// 添加动态路由
++		await setAddRoute();
++		// 设置递归过滤有权限的路由到 pinia routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组
++		await setFilterMenuAndCacheTagsViewRoutes();
++		return true;
++	} catch (error) {
++		console.error('初始化前端路由失败:', error);
++		Session.clear();
++		return false;
++	}
+ }
+ 
+ /**
+diff --git a/web/src/router/index.ts b/web/src/router/index.ts
+index 37708c6..f75f54f 100644
+--- a/web/src/router/index.ts
++++ b/web/src/router/index.ts
+@@ -98,6 +98,9 @@ export function formatTwoStageRoutes(arr: any) {
+ 
+ const frameOutRoutes = staticRoutes.map(item => item.path)
+ 
++// 标记是否正在初始化路由，防止重复初始化
++let isInitializingRoutes = false;
++
+ const checkToken = ()=>{
+     const urlParams = new URLSearchParams(window.location.search);
+     const _oauth2_token = urlParams.get('_oauth2_token');
+@@ -106,7 +109,6 @@ const checkToken = ()=>{
+         const cleanUrl = window.location.href.split('?')[0];
+         window.history.replaceState({}, '', cleanUrl);
+         useUserInfo(pinia).setUserInfos();
+-
+     }
+ }
+ // 路由加载前
+@@ -117,42 +119,78 @@ router.beforeEach(async (to, from, next) => {
+     NProgress.configure({showSpinner: false});
+     if (to.meta.title) NProgress.start();
+     const token = Session.get('token');
+-    if (to.path === '/login' && !token) {
+-        next();
+-        NProgress.done();
+-    } else {
++
++    // 登录页面处理
++    if (to.path === '/login') {
+         if (!token) {
+-            next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
+-            Session.clear();
++            next();
+             NProgress.done();
+-        }else if (token && to.path === '/login' && userInfos.value.pwd_change_count===0 ) {
+-            next('/login');
+-            NProgress.done();
+-        } else if (token && to.path === '/login' && userInfos.value.pwd_change_count>0) {
+-            next('/home');
+-            NProgress.done();
+-        }else if(token &&  frameOutRoutes.includes(to.path) ){
+-            next()
+         } else {
+-            const storesRoutesList = useRoutesList(pinia);
+-            const {routesList} = storeToRefs(storesRoutesList);
+-            if (routesList.value.length === 0) {
+-                if (isRequestRoutes) {
+-                    // 后端控制路由：路由数据初始化，防止刷新时丢失
+-                    await initBackEndControlRoutes();
+-                    // 解决刷新时，一直跳 404 页面问题，关联问题 No match found for location with path 'xxx'
+-                    // to.query 防止页面刷新时，普通路由带参数时，参数丢失。动态路由（xxx/:id/:name"）isDynamic 无需处理
+-
+-                    next({ path: to.path, query: to.query });
+-                } else {
+-                    // https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
+-                    await initFrontEndControlRoutes();
+-                    next({ path: to.path, query: to.query });
+-                }
++            // 已有 token，检查是否需要改密码
++            if (userInfos.value.pwd_change_count === 0) {
++                next('/login');
++                NProgress.done();
++            } else {
++                next('/home');
++                NProgress.done();
++            }
++        }
++        return;
++    }
++
++    // 无 token 跳转到登录页
++    if (!token) {
++        next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
++        Session.clear();
++        NProgress.done();
++        return;
++    }
++
++    // 外部路由直接通过
++    if (frameOutRoutes.includes(to.path)) {
++        next();
++        return;
++    }
++
++    const storesRoutesList = useRoutesList(pinia);
++    const {routesList} = storeToRefs(storesRoutesList);
++
++    // 如果路由列表为空且未在初始化中，则进行初始化
++    if (routesList.value.length === 0 && !isInitializingRoutes) {
++        isInitializingRoutes = true;
++        try {
++            let initSuccess = false;
++            if (isRequestRoutes) {
++                // 后端控制路由
++                initSuccess = await initBackEndControlRoutes();
+             } else {
+-                next();
++                // 前端控制路由
++                await initFrontEndControlRoutes();
++                initSuccess = true;
+             }
++
++            if (initSuccess) {
++                // 重新导航到目标路由，确保动态路由已添加
++                next({ path: to.path, query: to.query, replace: true });
++            } else {
++                // 初始化失败，跳转到登录页
++                next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
++                NProgress.done();
++            }
++        } catch (error) {
++            console.error('路由初始化失败:', error);
++            Session.clear();
++            next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
++            NProgress.done();
++        } finally {
++            isInitializingRoutes = false;
+         }
++    } else if (routesList.value.length === 0 && isInitializingRoutes) {
++        // 正在初始化中，继续等待
++        return;
++    } else {
++        // 路由已就绪，正常进入
++        next();
+     }
+ });
+ 
+diff --git a/web/src/stores/userInfo.ts b/web/src/stores/userInfo.ts
+index c896214..d09ae7a 100644
+--- a/web/src/stores/userInfo.ts
++++ b/web/src/stores/userInfo.ts
+@@ -57,29 +57,21 @@ export const useUserInfo = defineStore('userInfo', {
+ 			if (Session.get('userInfo')) {
+ 				this.userInfos = Session.get('userInfo');
+ 			} else {
+-				let userInfos: any = await this.getApiUserInfo();
+-				this.userInfos.id = userInfos.id;
+-				this.userInfos.username = userInfos.data.name;
+-				this.userInfos.avatar = userInfos.data.avatar;
+-				this.userInfos.name = userInfos.data.name;
+-				this.userInfos.email = userInfos.data.email;
+-				this.userInfos.mobile = userInfos.data.mobile;
+-				this.userInfos.gender = userInfos.data.gender;
+-				this.userInfos.dept_info = userInfos.data.dept_info;
+-				this.userInfos.role_info = userInfos.data.role_info;
+-				this.userInfos.pwd_change_count = userInfos.data.pwd_change_count;
+-				this.userInfos.is_superuser = userInfos.data.is_superuser;
+-				Session.set('userInfo', this.userInfos);
++				await this.getApiUserInfo();
+ 			}
+ 		},
+ 		async setWebSocketState(socketState: boolean) {
+ 			this.isSocketOpen = socketState;
+ 		},
+ 		async getApiUserInfo() {
+-			return request({
+-				url: '/api/system/user/user_info/',
+-				method: 'get',
+-			}).then((res:any)=>{
++			try {
++				const res = await request({
++					url: '/api/system/user/user_info/',
++					method: 'get',
++				});
++				if (!res || !res.data) {
++					throw new Error('获取用户信息失败');
++				}
+ 				this.userInfos.id = res.data.id;
+ 				this.userInfos.username = res.data.name;
+ 				this.userInfos.avatar = (res.data.avatar && getBaseURL(res.data.avatar)) || headerImage;
+@@ -92,7 +84,12 @@ export const useUserInfo = defineStore('userInfo', {
+ 				this.userInfos.pwd_change_count = res.data.pwd_change_count;
+ 				this.userInfos.is_superuser = res.data.is_superuser;
+ 				Session.set('userInfo', this.userInfos);
+-			})
++				return res.data;
++			} catch (error) {
++				console.error('获取用户信息失败:', error);
++				Session.remove('userInfo');
++				throw error;
++			}
+ 		},
+ 	},
+ });
+diff --git a/web/src/views/system/login/component/account.vue b/web/src/views/system/login/component/account.vue
+index f6d224b..de5e025 100644
+--- a/web/src/views/system/login/component/account.vue
++++ b/web/src/views/system/login/component/account.vue
+@@ -144,38 +144,40 @@ export default defineComponent({
+ 		};
+ 		const loginClick = async () => {
+ 			if (!formRef.value) return
+-			await formRef.value.validate((valid: any) => {
+-				if (valid) {
+-					loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) }).then((res: any) => {
+-						if (res.code === 2000) {
+-              const {data} = res
+-              Cookies.set('username', res.data.username);
+-              Session.set('token', res.data.access);
+-              useUserInfo().setPwdChangeCount(data.pwd_change_count)
+-              if(data.pwd_change_count==0){
+-                return router.push('/login');
+-              }
+-							if (!themeConfig.value.isRequestRoutes) {
+-								// 前端控制路由，2、请注意执行顺序
+-								initFrontEndControlRoutes();
+-								loginSuccess();
+-							} else {
+-								// 模拟后端控制路由，isRequestRoutes 为 true，则开启后端控制路由
+-								// 添加完动态路由，再进行 router 跳转，否则可能报错 No match found for location with path "/"
+-								initBackEndControlRoutes();
+-								// 执行完 initBackEndControlRoutes，再执行 signInSuccess
+-								loginSuccess();
++			try {
++				await formRef.value.validate(async (valid: any) => {
++					if (valid) {
++						try {
++							const res = await loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) });
++							if (res.code === 2000) {
++								const { data } = res;
++								Cookies.set('username', res.data.username);
++								Session.set('token', res.data.access);
++								useUserInfo().setPwdChangeCount(data.pwd_change_count);
++								if (data.pwd_change_count === 0) {
++									return router.push('/login');
++								}
++								if (!themeConfig.value.isRequestRoutes) {
++									// 前端控制路由，请注意执行顺序
++									await initFrontEndControlRoutes();
++									loginSuccess();
++								} else {
++									// 后端控制路由，添加完动态路由，再进行 router 跳转
++									await initBackEndControlRoutes();
++									loginSuccess();
++								}
+ 							}
++						} catch (err: any) {
++							// 登录错误之后，刷新验证码
++							refreshCaptcha();
+ 						}
+-					}).catch((err: any) => {
+-						// 登录错误之后，刷新验证码
+-						refreshCaptcha();
+-					});
+-				} else {
+-					errorMessage("请填写登录信息")
+-				}
+-			})
+-
++					} else {
++						errorMessage("请填写登录信息");
++					}
++				});
++			} catch (error) {
++				console.error('登录失败:', error);
++			}
+ 		};
+ 
+ 

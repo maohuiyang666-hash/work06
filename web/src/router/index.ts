@@ -98,6 +98,9 @@ export function formatTwoStageRoutes(arr: any) {
 
 const frameOutRoutes = staticRoutes.map(item => item.path)
 
+// 标记是否正在初始化路由，防止重复初始化
+let isInitializingRoutes = false;
+
 const checkToken = ()=>{
     const urlParams = new URLSearchParams(window.location.search);
     const _oauth2_token = urlParams.get('_oauth2_token');
@@ -106,7 +109,6 @@ const checkToken = ()=>{
         const cleanUrl = window.location.href.split('?')[0];
         window.history.replaceState({}, '', cleanUrl);
         useUserInfo(pinia).setUserInfos();
-
     }
 }
 // 路由加载前
@@ -117,42 +119,78 @@ router.beforeEach(async (to, from, next) => {
     NProgress.configure({showSpinner: false});
     if (to.meta.title) NProgress.start();
     const token = Session.get('token');
-    if (to.path === '/login' && !token) {
-        next();
-        NProgress.done();
-    } else {
-        if (!token) {
-            next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
-            Session.clear();
-            NProgress.done();
-        }else if (token && to.path === '/login' && userInfos.value.pwd_change_count===0 ) {
-            next('/login');
-            NProgress.done();
-        } else if (token && to.path === '/login' && userInfos.value.pwd_change_count>0) {
-            next('/home');
-            NProgress.done();
-        }else if(token &&  frameOutRoutes.includes(to.path) ){
-            next()
-        } else {
-            const storesRoutesList = useRoutesList(pinia);
-            const {routesList} = storeToRefs(storesRoutesList);
-            if (routesList.value.length === 0) {
-                if (isRequestRoutes) {
-                    // 后端控制路由：路由数据初始化，防止刷新时丢失
-                    await initBackEndControlRoutes();
-                    // 解决刷新时，一直跳 404 页面问题，关联问题 No match found for location with path 'xxx'
-                    // to.query 防止页面刷新时，普通路由带参数时，参数丢失。动态路由（xxx/:id/:name"）isDynamic 无需处理
 
-                    next({ path: to.path, query: to.query });
-                } else {
-                    // https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
-                    await initFrontEndControlRoutes();
-                    next({ path: to.path, query: to.query });
-                }
+    // 登录页面处理
+    if (to.path === '/login') {
+        if (!token) {
+            next();
+            NProgress.done();
+        } else {
+            // 已有 token，检查是否需要改密码
+            if (userInfos.value.pwd_change_count === 0) {
+                next('/login');
+                NProgress.done();
             } else {
-                next();
+                next('/home');
+                NProgress.done();
             }
         }
+        return;
+    }
+
+    // 无 token 跳转到登录页
+    if (!token) {
+        next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
+        Session.clear();
+        NProgress.done();
+        return;
+    }
+
+    // 外部路由直接通过
+    if (frameOutRoutes.includes(to.path)) {
+        next();
+        return;
+    }
+
+    const storesRoutesList = useRoutesList(pinia);
+    const {routesList} = storeToRefs(storesRoutesList);
+
+    // 如果路由列表为空且未在初始化中，则进行初始化
+    if (routesList.value.length === 0 && !isInitializingRoutes) {
+        isInitializingRoutes = true;
+        try {
+            let initSuccess = false;
+            if (isRequestRoutes) {
+                // 后端控制路由
+                initSuccess = await initBackEndControlRoutes();
+            } else {
+                // 前端控制路由
+                await initFrontEndControlRoutes();
+                initSuccess = true;
+            }
+
+            if (initSuccess) {
+                // 重新导航到目标路由，确保动态路由已添加
+                next({ path: to.path, query: to.query, replace: true });
+            } else {
+                // 初始化失败，跳转到登录页
+                next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
+                NProgress.done();
+            }
+        } catch (error) {
+            console.error('路由初始化失败:', error);
+            Session.clear();
+            next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
+            NProgress.done();
+        } finally {
+            isInitializingRoutes = false;
+        }
+    } else if (routesList.value.length === 0 && isInitializingRoutes) {
+        // 正在初始化中，继续等待
+        return;
+    } else {
+        // 路由已就绪，正常进入
+        next();
     }
 });
 
