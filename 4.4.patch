@@ -1,0 +1,86 @@
+diff --git a/web/src/router/index.ts b/web/src/router/index.ts
+index 37708c6..c1192d9 100644
+--- a/web/src/router/index.ts
++++ b/web/src/router/index.ts
+@@ -109,6 +109,9 @@ const checkToken = ()=>{
+ 
+     }
+ }
++// 路由动态初始化锁，防止并发重复初始化
++let isRoutesInitializing = false;
++
+ // 路由加载前
+ router.beforeEach(async (to, from, next) => {
+     // 检查浏览器本地版本与线上版本是否一致，判断是否需要刷新页面进行更新
+@@ -137,17 +140,38 @@ router.beforeEach(async (to, from, next) => {
+             const storesRoutesList = useRoutesList(pinia);
+             const {routesList} = storeToRefs(storesRoutesList);
+             if (routesList.value.length === 0) {
+-                if (isRequestRoutes) {
+-                    // 后端控制路由：路由数据初始化，防止刷新时丢失
+-                    await initBackEndControlRoutes();
++                // 防止并发重复初始化动态路由
++                if (isRoutesInitializing) {
++                    next();
++                    return;
++                }
++                isRoutesInitializing = true;
++                try {
++                    if (isRequestRoutes) {
++                        // 后端控制路由：路由数据初始化，防止刷新时丢失
++                        await initBackEndControlRoutes();
++                    } else {
++                        // https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
++                        await initFrontEndControlRoutes();
++                    }
++                    // 初始化后再次检查路由是否加载成功（防止 initBackEndControlRoutes 因无 token 等原因返回 false）
++                    if (routesList.value.length === 0) {
++                        Session.clear();
++                        next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
++                        NProgress.done();
++                        return;
++                    }
+                     // 解决刷新时，一直跳 404 页面问题，关联问题 No match found for location with path 'xxx'
+                     // to.query 防止页面刷新时，普通路由带参数时，参数丢失。动态路由（xxx/:id/:name"）isDynamic 无需处理
+-
+-                    next({ path: to.path, query: to.query });
+-                } else {
+-                    // https://gitee.com/lyt-top/vue-next-admin/issues/I5F1HP
+-                    await initFrontEndControlRoutes();
+                     next({ path: to.path, query: to.query });
++                } catch (err) {
++                    // 路由初始化失败（如 token 过期、网络异常），跳转登录页
++                    console.error('动态路由初始化失败:', err);
++                    Session.clear();
++                    next(`/login?redirect=${to.path}&params=${JSON.stringify(to.query ? to.query : to.params)}`);
++                    NProgress.done();
++                } finally {
++                    isRoutesInitializing = false;
+                 }
+             } else {
+                 next();
+diff --git a/web/src/views/system/login/component/account.vue b/web/src/views/system/login/component/account.vue
+index f6d224b..f56a093 100644
+--- a/web/src/views/system/login/component/account.vue
++++ b/web/src/views/system/login/component/account.vue
+@@ -144,9 +144,9 @@ export default defineComponent({
+ 		};
+ 		const loginClick = async () => {
+ 			if (!formRef.value) return
+-			await formRef.value.validate((valid: any) => {
++			await formRef.value.validate(async (valid: any) => {
+ 				if (valid) {
+-					loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) }).then((res: any) => {
++					loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) }).then(async (res: any) => {
+ 						if (res.code === 2000) {
+               const {data} = res
+               Cookies.set('username', res.data.username);
+@@ -162,7 +162,7 @@ export default defineComponent({
+ 							} else {
+ 								// 模拟后端控制路由，isRequestRoutes 为 true，则开启后端控制路由
+ 								// 添加完动态路由，再进行 router 跳转，否则可能报错 No match found for location with path "/"
+-								initBackEndControlRoutes();
++								await initBackEndControlRoutes();
+ 								// 执行完 initBackEndControlRoutes，再执行 signInSuccess
+ 								loginSuccess();
+ 							}

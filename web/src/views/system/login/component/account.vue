@@ -144,9 +144,9 @@ export default defineComponent({
 		};
 		const loginClick = async () => {
 			if (!formRef.value) return
-			await formRef.value.validate((valid: any) => {
+			await formRef.value.validate(async (valid: any) => {
 				if (valid) {
-					loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) }).then((res: any) => {
+					loginApi.login({ ...state.ruleForm, password: Md5.hashStr(state.ruleForm.password) }).then(async (res: any) => {
 						if (res.code === 2000) {
               const {data} = res
               Cookies.set('username', res.data.username);
@@ -162,7 +162,7 @@ export default defineComponent({
 							} else {
 								// 模拟后端控制路由，isRequestRoutes 为 true，则开启后端控制路由
 								// 添加完动态路由，再进行 router 跳转，否则可能报错 No match found for location with path "/"
-								initBackEndControlRoutes();
+								await initBackEndControlRoutes();
 								// 执行完 initBackEndControlRoutes，再执行 signInSuccess
 								loginSuccess();
 							}
