@@ -162,7 +162,8 @@ export default defineComponent({
 							} else {
 								// 模拟后端控制路由，isRequestRoutes 为 true，则开启后端控制路由
 								// 添加完动态路由，再进行 router 跳转，否则可能报错 No match found for location with path "/"
-								initBackEndControlRoutes();
+								// 必须 await 等动态路由初始化完成后再跳转
+								await initBackEndControlRoutes();
 								// 执行完 initBackEndControlRoutes，再执行 signInSuccess
 								loginSuccess();
 							}

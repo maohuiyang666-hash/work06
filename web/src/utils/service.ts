@@ -81,10 +81,13 @@ function createService() {
 						Session.clear();
 						dataAxios.msg = '登录认证失败，请重新登录';
 						ElMessageBox.alert(dataAxios.msg, '提示', {
-							confirmButtonText: 'OK',
-							callback: (action: Action) => {
-								// window.location.reload();
+							confirmButtonText: '确定',
+							callback: () => {
+								window.location.href = window.location.origin + '/#/login';
 							},
+						}).catch(() => {
+							// 用户关闭弹窗时也跳转
+							window.location.href = window.location.origin + '/#/login';
 						});
 						errorCreate(`${dataAxios.msg}: ${response.config.url}`);
 						break;
@@ -117,10 +120,12 @@ function createService() {
 					Session.clear();
 					error.message = '登录授权过期，请重新登录';
 					ElMessageBox.alert(error.message, '提示', {
-						confirmButtonText: 'OK',
-						callback: (action: Action) => {
-							window.location.reload();
+						confirmButtonText: '确定',
+						callback: () => {
+							window.location.href = window.location.origin + '/#/login';
 						},
+					}).catch(() => {
+						window.location.href = window.location.origin + '/#/login';
 					});
 					break;
 				case 403:
