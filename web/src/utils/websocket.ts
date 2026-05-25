@@ -1,9 +1,12 @@
 import {ElNotification  as message} from 'element-plus'
-import {Session} from "/@/utils/storage";
-import {getWsBaseURL} from "/@/utils/baseUrl";
+import { Session } from "/@/utils/storage";
+import { getWsBaseURL } from "/@/utils/baseUrl";
 // @ts-ignore
 import socket from '@/types/api/socket'
-import {useUserInfo} from "/@/stores/userInfo";
+import { useUserInfo } from "/@/stores/userInfo";
+// 保存 receiveMessage 回调函数，重连时需要
+let savedReceiveMessage: Function | null = null;
+
 const websocket: socket = {
     websocket: null,
     connectURL: getWsBaseURL(),
@@ -24,6 +27,10 @@ const websocket: socket = {
     // 重连频率
     reconnect_interval: 5 * 1000,
     init: (receiveMessage: Function | null) => {
+        // 保存回调函数，重连时会用到
+        if (receiveMessage) {
+            savedReceiveMessage = receiveMessage;
+        }
         if (!('WebSocket' in window)) {
             message.warning('浏览器不支持WebSocket')
             return null
@@ -33,16 +40,22 @@ const websocket: socket = {
             // message.warning('websocket认证失败')
             return null
         }
+        // 如果已有连接，先关闭
+        if (websocket.websocket) {
+            websocket.close()
+        }
         const wsUrl = `${getWsBaseURL()}ws/${token}/`
         websocket.websocket = new WebSocket(wsUrl)
         websocket.websocket.onmessage = (e: any) => {
-            if (receiveMessage) {
-                receiveMessage(e)
+            if (savedReceiveMessage) {
+                savedReceiveMessage(e)
             }
         }
         websocket.websocket.onclose = (e: any) => {
             websocket.socket_open = false
             useUserInfo().setWebSocketState(websocket.socket_open);
+            // 清除心跳
+            websocket.hearbeat_timer && clearInterval(websocket.hearbeat_timer)
             // 需要重新连接
             if (websocket.is_reonnect) {
                 websocket.reconnect_timer = setTimeout(() => {
@@ -65,6 +78,7 @@ const websocket: socket = {
             websocket.socket_open = true
             useUserInfo().setWebSocketState(websocket.socket_open);
             websocket.is_reonnect = true
+            websocket.reconnect_current = 1
             // 开启心跳
             websocket.heartbeat()
         }
@@ -83,7 +97,7 @@ const websocket: socket = {
     },
     send: (data:string, callback = null) => {
         // 开启状态直接发送
-        if (websocket.websocket.readyState === websocket.websocket.OPEN) {
+        if (websocket.websocket && websocket.websocket.readyState === websocket.websocket.OPEN) {
             websocket.websocket.send(JSON.stringify(data))
             // @ts-ignore
             callback && callback()
@@ -100,8 +114,12 @@ const websocket: socket = {
     },
     close: () => {
         websocket.is_reonnect = false
-        websocket.websocket.close()
-        websocket.websocket = null;
+        websocket.hearbeat_timer && clearInterval(websocket.hearbeat_timer)
+        websocket.reconnect_timer && clearTimeout(websocket.reconnect_timer)
+        if (websocket.websocket) {
+            websocket.websocket.close()
+            websocket.websocket = null;
+        }
         websocket.socket_open = false
         useUserInfo().setWebSocketState(websocket.socket_open);
     },
@@ -109,9 +127,8 @@ const websocket: socket = {
      * 重新连接
      */
     reconnect: () => {
-        if (websocket.websocket && !websocket.is_reonnect) {
-            websocket.close()
-        }
+        // 保持 is_reonnect 为 true
+        websocket.is_reonnect = true
         websocket.init(null)
     },
 }

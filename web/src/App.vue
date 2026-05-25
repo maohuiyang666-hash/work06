@@ -86,6 +86,12 @@ onMounted(() => {
 		if (Session.get('isTagsViewCurrenFull')) {
 			stores.setCurrenFullscreen(Session.get('isTagsViewCurrenFull'));
 		}
+		// 在页面加载时立即初始化 WebSocket 连接
+		try {
+			websocket.init(wsReceive)
+		} catch (e) {
+			console.log('websocket错误');
+		}
 	});
 });
 // 页面销毁时，关闭监听布局配置/i18n监听
@@ -98,14 +104,6 @@ watch(
     () => {
       other.useTitle();
       other.useFavicon();
-      if (!websocket.websocket) {
-        //websockt 模块
-        try {
-          websocket.init(wsReceive)
-        } catch (e) {
-          console.log('websocket错误');
-        }
-      }
     },
     {
       deep: true,
