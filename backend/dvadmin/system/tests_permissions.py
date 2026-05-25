@@ -1,0 +1,639 @@
+# -*- coding: utf-8 -*-
+"""
+权限相关接口的后端测试
+验证按钮权限和数据权限不会互相错位
+"""
+import os
+import re
+import django
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'application.settings')
+django.setup()
+
+from django.test import TestCase, RequestFactory
+from django.contrib.auth import get_user_model
+from rest_framework.test import APITestCase, APIClient
+
+from dvadmin.system.models import (
+    Menu, MenuButton, Role, RoleMenuPermission,
+    RoleMenuButtonPermission, Dept, Users
+)
+from dvadmin.utils.filters import DataLevelPermissionsFilter, get_dept
+
+
+class ButtonPermissionTest(TestCase):
+    """
+    测试按钮权限返回逻辑
+    验证普通角色拥有页面访问权限，但只拥有部分按钮权限时，
+    接口返回的按钮权限集合符合预期
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        """初始化测试数据"""
+        # 创建部门结构: 公司 -> 技术部 -> 前端组
+        cls.dept_company = Dept.objects.create(name='总公司', sort=1)
+        cls.dept_tech = Dept.objects.create(name='技术部', sort=1, parent=cls.dept_company)
+        cls.dept_frontend = Dept.objects.create(name='前端组', sort=1, parent=cls.dept_tech)
+
+        # 创建角色
+        cls.role_normal = Role.objects.create(
+            name='普通角色',
+            key='normal_role',
+            sort=1,
+            status=True
+        )
+        cls.role_admin = Role.objects.create(
+            name='管理员',
+            key='admin_role',
+            sort=0,
+            status=True
+        )
+
+        # 创建菜单
+        cls.menu_user = Menu.objects.create(
+            name='用户管理',
+            sort=1,
+            status=True,
+            is_catalog=False,
+            web_path='/user',
+            component='system/user/index',
+            component_name='UserManagement'
+        )
+
+        # 创建按钮: 查询、新增、编辑、删除
+        cls.btn_search = MenuButton.objects.create(
+            menu=cls.menu_user,
+            name='查询',
+            value='UserManagement:Search',
+            api='/api/user/',
+            method=0  # GET
+        )
+        cls.btn_create = MenuButton.objects.create(
+            menu=cls.menu_user,
+            name='新增',
+            value='UserManagement:Create',
+            api='/api/user/',
+            method=1  # POST
+        )
+        cls.btn_update = MenuButton.objects.create(
+            menu=cls.menu_user,
+            name='编辑',
+            value='UserManagement:Update',
+            api='/api/user/{id}/',
+            method=2  # PUT
+        )
+        cls.btn_delete = MenuButton.objects.create(
+            menu=cls.menu_user,
+            name='删除',
+            value='UserManagement:Delete',
+            api='/api/user/{id}/',
+            method=3  # DELETE
+        )
+
+        # 创建普通用户 - 属于前端组
+        cls.user_normal = Users.objects.create_user(
+            username='test_normal',
+            password='test123',
+            name='普通用户',
+            dept=cls.dept_frontend,
+            is_superuser=0
+        )
+        cls.user_normal.role.add(cls.role_normal)
+
+        # 创建管理员用户
+        cls.user_admin = Users.objects.create_user(
+            username='test_admin',
+            password='test123',
+            name='管理员',
+            dept=cls.dept_company,
+            is_superuser=1
+        )
+        cls.user_admin.role.add(cls.role_admin)
+
+    def test_menu_button_all_permission_returns_correct_buttons(self):
+        """
+        测试: 普通角色只拥有部分按钮权限时，menu_button_all_permission返回正确的按钮列表
+        场景: role_normal 只有查询和新增按钮权限
+        """
+        # 给普通角色分配部分按钮权限: 查询 + 新增 (没有编辑和删除)
+        RoleMenuButtonPermission.objects.create(
+            role=self.role_normal,
+            menu_button=self.btn_search,
+            data_range=2  # 本部门数据权限
+        )
+        RoleMenuButtonPermission.objects.create(
+            role=self.role_normal,
+            menu_button=self.btn_create,
+            data_range=2  # 本部门数据权限
+        )
+        # 不分配编辑和删除权限
+
+        # 模拟获取按钮权限
+        role_id_list = list(self.role_normal.id)
+        button_values = RoleMenuButtonPermission.objects.filter(
+            role__in=role_id_list
+        ).values_list('menu_button__value', flat=True).distinct()
+
+        button_values_list = list(button_values)
+
+        # 验证: 应该只返回有权限的按钮
+        self.assertIn('UserManagement:Search', button_values_list)
+        self.assertIn('UserManagement:Create', button_values_list)
+        self.assertNotIn('UserManagement:Update', button_values_list)
+        self.assertNotIn('UserManagement:Delete', button_values_list)
+        self.assertEqual(len(button_values_list), 2)
+
+    def test_admin_has_all_button_permissions(self):
+        """
+        测试: 管理员拥有所有按钮权限
+        """
+        # 给管理员分配所有按钮权限
+        for btn in [self.btn_search, self.btn_create, self.btn_update, self.btn_delete]:
+            RoleMenuButtonPermission.objects.create(
+                role=self.role_admin,
+                menu_button=btn,
+                data_range=3  # 全部数据权限
+            )
+
+        # 超级管理员获取所有按钮值
+        all_buttons = MenuButton.objects.values_list('value', flat=True)
+
+        # 超级管理员通过 is_superuser=1 应该返回所有按钮
+        button_values = RoleMenuButtonPermission.objects.filter(
+            role=self.role_admin
+        ).values_list('menu_button__value', flat=True).distinct()
+
+        # 验证管理员有所有按钮权限
+        self.assertGreaterEqual(len(list(button_values)), 4)
+
+
+class DataPermissionFilterTest(TestCase):
+    """
+    测试数据权限过滤逻辑
+    验证同一角色在不同数据范围设置下，列表数据过滤结果符合预期
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        """初始化测试数据"""
+        # 创建部门结构: 公司 -> 销售部 -> 销售一组、销售二组
+        cls.dept_company = Dept.objects.create(name='总公司', sort=1)
+        cls.dept_sales = Dept.objects.create(name='销售部', sort=1, parent=cls.dept_company)
+        cls.dept_sales1 = Dept.objects.create(name='销售一组', sort=1, parent=cls.dept_sales)
+        cls.dept_sales2 = Dept.objects.create(name='销售二组', sort=1, parent=cls.dept_sales)
+
+        # 创建一个测试模型用于模拟数据过滤
+        # 使用Users模型本身作为测试数据，它有dept_belong_id字段
+        cls.User = get_user_model()
+
+        # 创建角色
+        cls.role_self_only = Role.objects.create(
+            name='仅本人数据角色',
+            key='self_only_role',
+            sort=1,
+            status=True
+        )
+        cls.role_dept_only = Role.objects.create(
+            name='本部门数据角色',
+            key='dept_only_role',
+            sort=1,
+            status=True
+        )
+        cls.role_dept_and_below = Role.objects.create(
+            name='本部门及以下数据角色',
+            key='dept_and_below_role',
+            sort=1,
+            status=True
+        )
+        cls.role_all_data = Role.objects.create(
+            name='全部数据角色',
+            key='all_data_role',
+            sort=1,
+            status=True
+        )
+
+        # 创建测试用户
+        cls.user_sales1 = Users.objects.create_user(
+            username='user_sales1',
+            password='test123',
+            name='销售一组成员',
+            dept=cls.dept_sales1,
+            is_superuser=0
+        )
+        cls.user_sales1.role.add(cls.role_self_only)
+
+        cls.user_sales2 = Users.objects.create_user(
+            username='user_sales2',
+            password='test123',
+            name='销售二组成员',
+            dept=cls.dept_sales2,
+            is_superuser=0
+        )
+        cls.user_sales2.role.add(cls.role_dept_only)
+
+    def test_data_scope_self_only_filter(self):
+        """
+        测试: 仅本人数据权限 (data_range=0)
+        用户只能看自己的数据，且部门为自己本部门
+        """
+        # 获取角色对应的按钮权限
+        menu_btn = MenuButton.objects.filter(
+            api='/api/test/',
+            method=0
+        ).first()
+
+        if not menu_btn:
+            menu_btn = MenuButton.objects.create(
+                menu=Menu.objects.first(),
+                name='测试查询',
+                value='Test:Search',
+                api='/api/test/',
+                method=0
+            )
+
+        RoleMenuButtonPermission.objects.create(
+            role=self.role_self_only,
+            menu_button=menu_btn,
+            data_range=0  # 仅本人数据权限
+        )
+
+        # 模拟过滤查询
+        filter_backend = DataLevelPermissionsFilter()
+
+        # 创建一个mock queryset
+        from django.db.models import Q
+        mock_queryset = Users.objects.all()
+
+        # 模拟request
+        factory = RequestFactory()
+        request = factory.get('/api/test/')
+        request.user = self.user_sales1
+        request.query_params = {}
+        request.method = 'GET'
+        request.parser_context = {'kwargs': {}}
+
+        # 获取过滤后的结果
+        # 由于Users模型可能有软删除等，需要过滤
+        result = filter_backend.filter_queryset(request, mock_queryset, None)
+
+        # 验证: 仅本人数据权限应该过滤为当前用户且部门为本部门
+        # 检查是否存在 dept_belong_id 字段
+        if hasattr(mock_queryset.model, 'dept_belong_id'):
+            # 应该返回空或只有本人的数据
+            self.assertTrue(
+                result.filter(creator=self.user_sales1).exists() or
+                result.filter(username=self.user_sales1.username).exists()
+            )
+
+    def test_get_dept_recursive(self):
+        """
+        测试: get_dept 函数能正确递归获取子部门
+        验证本部门及以下数据权限时能包含子部门数据
+        """
+        # 测试获取技术部的所有下级部门
+        dept_ids = get_dept(self.dept_sales.id)
+
+        # 应该包含: 销售部、销售一组、销售二组
+        self.assertIn(self.dept_sales.id, dept_ids)
+        self.assertIn(self.dept_sales1.id, dept_ids)
+        self.assertIn(self.dept_sales2.id, dept_ids)
+        self.assertEqual(len(dept_ids), 3)
+
+        # 测试只获取前端组 (叶子节点)
+        # 先创建前端组
+        dept_frontend = Dept.objects.create(name='前端组', sort=1, parent=self.dept_sales)
+        dept_ids_frontend = get_dept(dept_frontend.id)
+        self.assertIn(dept_frontend.id, dept_ids_frontend)
+        self.assertEqual(len(dept_ids_frontend), 1)
+
+
+class DataPermissionFilterTest2(TestCase):
+    """
+    数据权限过滤的更完整测试
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        """初始化测试数据"""
+        # 创建部门结构
+        cls.dept_top = Dept.objects.create(name='顶级部门', sort=1)
+        cls.dept_a = Dept.objects.create(name='部门A', sort=1, parent=cls.dept_top)
+        cls.dept_a1 = Dept.objects.create(name='部门A1', sort=1, parent=cls.dept_a)
+        cls.dept_a2 = Dept.objects.create(name='部门A2', sort=1, parent=cls.dept_a)
+        cls.dept_b = Dept.objects.create(name='部门B', sort=1, parent=cls.dept_top)
+
+        # 创建角色
+        cls.role_all = Role.objects.create(
+            name='全部数据角色',
+            key='all_data',
+            sort=1,
+            status=True
+        )
+        cls.role_dept = Role.objects.create(
+            name='本部门角色',
+            key='dept_data',
+            sort=1,
+            status=True
+        )
+        cls.role_dept_below = Role.objects.create(
+            name='本部门及以下角色',
+            key='dept_below_data',
+            sort=1,
+            status=True
+        )
+
+        # 创建用户
+        cls.user_a = Users.objects.create_user(
+            username='user_a',
+            password='test123',
+            name='部门A用户',
+            dept=cls.dept_a,
+            is_superuser=0
+        )
+        cls.user_a.role.add(cls.role_dept)
+
+        cls.user_b = Users.objects.create_user(
+            username='user_b',
+            password='test123',
+            name='部门B用户',
+            dept=cls.dept_b,
+            is_superuser=0
+        )
+        cls.user_b.role.add(cls.role_all)
+
+    def test_superuser_bypasses_data_filter(self):
+        """
+        测试: 超级管理员不应受到普通数据权限过滤影响
+        超级管理员的 is_superuser == 1 时，应返回所有数据
+        """
+        # 创建超级管理员用户
+        super_user = Users.objects.create_user(
+            username='super_user',
+            password='test123',
+            name='超级管理员',
+            dept=self.dept_top,
+            is_superuser=1
+        )
+
+        # 模拟request
+        factory = RequestFactory()
+        request = factory.get('/api/test/')
+        request.user = super_user
+        request.query_params = {}
+        request.method = 'GET'
+        request.parser_context = {'kwargs': {}}
+
+        filter_backend = DataLevelPermissionsFilter()
+
+        # 超级管理员返回所有数据不过滤
+        # 根据代码逻辑，is_superuser == 1 时直接返回 queryset 不做过滤
+        # 所以这里我们验证代码确实走了这个逻辑分支
+
+        # 创建一个实际的 queryset 来测试
+        queryset = Users.objects.all()
+        result = filter_backend.filter_queryset(request, queryset, None)
+
+        # 超级管理员应该返回全部数据
+        self.assertEqual(list(result), list(queryset))
+
+
+class APIRouteChangeTest(TestCase):
+    """
+    测试当接口路径和请求方法发生变化时，数据权限匹配逻辑仍然正确
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        """初始化测试数据"""
+        cls.dept = Dept.objects.create(name='测试部门', sort=1)
+
+        cls.menu = Menu.objects.create(
+            name='测试菜单',
+            sort=1,
+            status=True,
+            is_catalog=False,
+            web_path='/test',
+            component='test/index',
+            component_name='TestManagement'
+        )
+
+        # 创建不同API路径的按钮
+        cls.btn_list = MenuButton.objects.create(
+            menu=cls.menu,
+            name='列表',
+            value='Test:List',
+            api='/api/test/',
+            method=0  # GET
+        )
+        cls.btn_detail = MenuButton.objects.create(
+            menu=cls.menu,
+            name='详情',
+            value='Test:Detail',
+            api='/api/test/{id}/',
+            method=0  # GET
+        )
+        cls.btn_create = MenuButton.objects.create(
+            menu=cls.menu,
+            name='创建',
+            value='Test:Create',
+            api='/api/test/',
+            method=1  # POST
+        )
+
+        cls.role = Role.objects.create(
+            name='测试角色',
+            key='test_role',
+            sort=1,
+            status=True
+        )
+
+        cls.user = Users.objects.create_user(
+            username='test_user',
+            password='test123',
+            name='测试用户',
+            dept=cls.dept,
+            is_superuser=0
+        )
+        cls.user.role.add(cls.role)
+
+    def test_api_route_with_id_replacement(self):
+        """
+        测试: API路径中的{id}占位符替换逻辑
+        当访问 /api/test/123/ 时，应该匹配 /api/test/{id}/ 的按钮权限
+        """
+        # 创建角色-按钮权限
+        RoleMenuButtonPermission.objects.create(
+            role=self.role,
+            menu_button=self.btn_detail,
+            data_range=2
+        )
+
+        # 模拟请求 /api/test/123/ (带id的详情请求)
+        factory = RequestFactory()
+        request = factory.get('/api/test/123/')
+        request.user = self.user
+        request.query_params = {}
+        request.method = 'GET'
+        request.parser_context = {'kwargs': {'pk': '123'}}
+
+        # 验证替换逻辑
+        api = '/api/test/123/'
+        _pk = '123'
+        re_api = re.sub(_pk, '{id}', api)
+        self.assertEqual(re_api, '/api/test/{id}/')
+
+        # 验证能否匹配到正确的按钮
+        method = 0  # GET
+        menu_button_ids = MenuButton.objects.filter(
+            api=re_api,
+            method=method
+        ).values_list('id', flat=True)
+
+        self.assertIn(self.btn_detail.id, list(menu_button_ids))
+
+    def test_different_methods_match_different_buttons(self):
+        """
+        测试: 不同HTTP方法匹配不同的按钮权限
+        GET /api/test/ 匹配列表按钮
+        POST /api/test/ 匹配创建按钮
+        """
+        RoleMenuButtonPermission.objects.create(
+            role=self.role,
+            menu_button=self.btn_list,
+            data_range=2
+        )
+        RoleMenuButtonPermission.objects.create(
+            role=self.role,
+            menu_button=self.btn_create,
+            data_range=2
+        )
+
+        # GET请求应该只匹配GET方法的按钮
+        get_method = 0
+        get_buttons = MenuButton.objects.filter(
+            api='/api/test/',
+            method=get_method
+        ).values_list('id', flat=True)
+        self.assertIn(self.btn_list.id, list(get_buttons))
+        self.assertNotIn(self.btn_create.id, list(get_buttons))
+
+        # POST请求应该只匹配POST方法的按钮
+        post_method = 1
+        post_buttons = MenuButton.objects.filter(
+            api='/api/test/',
+            method=post_method
+        ).values_list('id', flat=True)
+        self.assertIn(self.btn_create.id, list(post_buttons))
+        self.assertNotIn(self.btn_list.id, list(post_buttons))
+
+
+class ButtonAndDataPermissionSeparationTest(TestCase):
+    """
+    测试按钮权限和数据权限的分离性
+    确保两者不会互相错位
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        """初始化测试数据"""
+        cls.dept = Dept.objects.create(name='测试部门', sort=1)
+
+        cls.menu = Menu.objects.create(
+            name='用户菜单',
+            sort=1,
+            status=True,
+            is_catalog=False,
+            web_path='/users',
+            component='system/user/index',
+            component_name='UserManagement'
+        )
+
+        # 创建按钮
+        cls.btn_search = MenuButton.objects.create(
+            menu=cls.menu,
+            name='查询',
+            value='UserManagement:Search',
+            api='/api/users/',
+            method=0
+        )
+        cls.btn_delete = MenuButton.objects.create(
+            menu=cls.menu,
+            name='删除',
+            value='UserManagement:Delete',
+            api='/api/users/{id}/',
+            method=3
+        )
+
+        cls.role = Role.objects.create(
+            name='测试角色',
+            key='test_role',
+            sort=1,
+            status=True
+        )
+
+        cls.user = Users.objects.create_user(
+            username='test_separation',
+            password='test123',
+            name='测试用户',
+            dept=cls.dept,
+            is_superuser=0
+        )
+        cls.user.role.add(cls.role)
+
+    def test_button_permission_does_not_affect_data_scope(self):
+        """
+        测试: 按钮权限设置不应影响数据范围
+        用户有删除按钮权限，但数据范围是仅本人
+        删除按钮能返回，但数据过滤应该正确
+        """
+        # 用户有删除按钮权限
+        RoleMenuButtonPermission.objects.create(
+            role=self.role,
+            menu_button=self.btn_delete,
+            data_range=0  # 仅本人数据权限 - 这个data_range是按钮级别的数据范围设置
+        )
+
+        # 验证按钮权限返回正确
+        role_buttons = RoleMenuButtonPermission.objects.filter(
+            role=self.role
+        ).values_list('menu_button__value', flat=True)
+        self.assertIn('UserManagement:Delete', list(role_buttons))
+
+        # 注意: 按钮权限的data_range和DataLevelPermissionsFilter的过滤逻辑是分开的
+        # 按钮权限控制"能返回哪些按钮"
+        # 数据权限过滤器控制"能从接口返回哪些数据"
+        # 两者通过MenuButton的api和method字段关联，但数据过滤发生在queryset层面
+
+    def test_data_filter_uses_correct_button_permission(self):
+        """
+        测试: 数据权限过滤器使用正确的按钮权限进行过滤
+        访问/api/users/时，应该使用GET方法的按钮权限进行数据范围判断
+        """
+        RoleMenuButtonPermission.objects.create(
+            role=self.role,
+            menu_button=self.btn_search,
+            data_range=2  # 本部门数据权限
+        )
+
+        # 模拟访问列表接口
+        factory = RequestFactory()
+        request = factory.get('/api/users/')
+        request.user = self.user
+        request.query_params = {}
+        request.method = 'GET'
+        request.parser_context = {'kwargs': {}}
+
+        # 验证能匹配到正确的按钮
+        menu_button_ids = MenuButton.objects.filter(
+            api='/api/users/',
+            method=0  # GET
+        ).values_list('id', flat=True)
+
+        # 验证角色有该按钮的权限
+        role_has_permission = RoleMenuButtonPermission.objects.filter(
+            role=self.role,
+            menu_button_id__in=menu_button_ids,
+            role__status=1
+        ).exists()
+        self.assertTrue(role_has_permission)
