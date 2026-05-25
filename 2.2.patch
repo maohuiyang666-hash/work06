@@ -1,0 +1,63 @@
+diff --git a/web/.env b/web/.env
+index a77f485..c26a5af 100644
+--- a/web/.env
++++ b/web/.env
+@@ -1,6 +1,7 @@
+ # port 端口号
+ VITE_PORT = 8080
+ VITE_API_URL = 'http://127.0.0.1:8000'
++VITE_WS_URL = 'http://127.0.0.1:8000'
+ # open 运行 npm run dev 时自动打开浏览器
+ VITE_OPEN = false
+ 
+diff --git a/web/.env.development b/web/.env.development
+index fc47d19..688a1d0 100644
+--- a/web/.env.development
++++ b/web/.env.development
+@@ -2,6 +2,7 @@
+ ENV = 'development'
+ VITE_PORT = 8080
+ VITE_API_URL = 'http://127.0.0.1:8000'
++VITE_WS_URL = 'http://127.0.0.1:8000'
+ # open 运行 npm run dev 时自动打开浏览器
+ VITE_OPEN = false
+ 
+diff --git a/web/.env.local_prod b/web/.env.local_prod
+index dad4103..8287889 100644
+--- a/web/.env.local_prod
++++ b/web/.env.local_prod
+@@ -3,6 +3,7 @@ ENV = 'local_prod'
+ 
+ # 线上环境接口地址
+ VITE_API_URL = '/'
++VITE_WS_URL = '/'
+ 
+ # 是否启用按钮权限
+ VITE_PM_ENABLED = true
+diff --git a/web/.env.production b/web/.env.production
+index 998aa5e..b429956 100644
+--- a/web/.env.production
++++ b/web/.env.production
+@@ -2,7 +2,8 @@
+ ENV = 'production'
+ 
+ # 线上环境接口地址
+-VITE_API_URL = '/api' # docker-compose部署不需要修改，nginx容器自动代理了这个地址
++VITE_API_URL = '/'
++VITE_WS_URL = '/'
+ 
+ # 是否启用按钮权限
+ VITE_PM_ENABLED = true
+diff --git a/web/src/utils/baseUrl.ts b/web/src/utils/baseUrl.ts
+index 6b55c27..108c526 100644
+--- a/web/src/utils/baseUrl.ts
++++ b/web/src/utils/baseUrl.ts
+@@ -46,7 +46,7 @@ export const getBaseURL = function (url: null | string = null, isHost: null | bo
+ };
+ 
+ export const getWsBaseURL = function () {
+-	let baseURL = import.meta.env.VITE_API_URL as any;
++	let baseURL = (import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL) as any;
+ 	let param = baseURL.split('/')[3] || '';
+ 	// @ts-ignore
+ 	if (pluginsAll && pluginsAll.indexOf('dvadmin3-tenants-web') !== -1 && (!param || baseURL.startsWith('/'))) {

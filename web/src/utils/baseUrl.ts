@@ -46,7 +46,7 @@ export const getBaseURL = function (url: null | string = null, isHost: null | bo
 };
 
 export const getWsBaseURL = function () {
-	let baseURL = import.meta.env.VITE_API_URL as any;
+	let baseURL = (import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL) as any;
 	let param = baseURL.split('/')[3] || '';
 	// @ts-ignore
 	if (pluginsAll && pluginsAll.indexOf('dvadmin3-tenants-web') !== -1 && (!param || baseURL.startsWith('/'))) {
