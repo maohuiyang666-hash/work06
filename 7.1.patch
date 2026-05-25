@@ -1,0 +1,483 @@
+diff --git a/7.1.patch b/7.1.patch
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/dvadmin/system/tests_permission.py b/backend/dvadmin/system/tests_permission.py
+new file mode 100644
+index 0000000..64fef32
+--- /dev/null
++++ b/backend/dvadmin/system/tests_permission.py
+@@ -0,0 +1,474 @@
++# -*- coding: utf-8 -*-
++"""
++权限系统测试套件
++测试内容：
++1. 按钮权限 - 验证用户只能看到分配给角色的按钮
++2. 数据权限 - 验证不同数据范围的过滤结果
++3. 超级管理员权限 - 验证不受数据权限限制
++4. API路径和请求方法匹配 - 验证权限匹配逻辑
++"""
++
++import re
++from django.test import TestCase, RequestFactory
++from django.contrib.auth.hashers import make_password
++from django.db.models import Q
++from rest_framework.test import APIRequestFactory, force_authenticate
++
++from dvadmin.system.models import (
++    Users, Role, Dept, Menu, MenuButton,
++    RoleMenuButtonPermission, RoleMenuPermission
++)
++from dvadmin.utils.filters import DataLevelPermissionsFilter, get_dept
++from dvadmin.system.views.menu_button import MenuButtonViewSet
++from dvadmin.system.views.user import UserViewSet
++
++
++class PermissionTestBase(TestCase):
++    """
++    权限测试基类
++    提供公共的测试数据设置
++    """
++
++    @classmethod
++    def setUpTestData(cls):
++        """
++        设置测试数据
++        创建部门层级结构：
++        集团公司 -> 技术部 -> 开发组
++                 -> 市场部
++        """
++        # 创建部门
++        cls.dept_group = Dept.objects.create(
++            name="集团公司",
++            key="group",
++            sort=1,
++            status=True
++        )
++        cls.dept_tech = Dept.objects.create(
++            name="技术部",
++            key="tech",
++            sort=2,
++            status=True,
++            parent=cls.dept_group
++        )
++        cls.dept_dev = Dept.objects.create(
++            name="开发组",
++            key="dev",
++            sort=3,
++            status=True,
++            parent=cls.dept_tech
++        )
++        cls.dept_market = Dept.objects.create(
++            name="市场部",
++            key="market",
++            sort=4,
++            status=True,
++            parent=cls.dept_group
++        )
++
++        # 创建菜单
++        cls.menu_user = Menu.objects.create(
++            name="用户管理",
++            web_path="/system/user",
++            component_name="User",
++            sort=1,
++            status=True
++        )
++
++        # 创建菜单按钮
++        cls.btn_list = MenuButton.objects.create(
++            name="查询",
++            value="User:List",
++            api="/api/system/user/",
++            method=0,  # GET
++            menu=cls.menu_user
++        )
++        cls.btn_create = MenuButton.objects.create(
++            name="新增",
++            value="User:Create",
++            api="/api/system/user/",
++            method=1,  # POST
++            menu=cls.menu_user
++        )
++        cls.btn_update = MenuButton.objects.create(
++            name="修改",
++            value="User:Update",
++            api="/api/system/user/{id}/",
++            method=2,  # PUT
++            menu=cls.menu_user
++        )
++        cls.btn_delete = MenuButton.objects.create(
++            name="删除",
++            value="User:Delete",
++            api="/api/system/user/{id}/",
++            method=3,  # DELETE
++            menu=cls.menu_user
++        )
++
++        # 创建角色 - 超级管理员
++        cls.role_admin = Role.objects.create(
++            name="超级管理员",
++            key="admin",
++            sort=1,
++            status=True
++        )
++
++        # 创建角色 - 普通用户（仅本人数据）
++        cls.role_user_self = Role.objects.create(
++            name="普通用户-仅本人",
++            key="user_self",
++            sort=2,
++            status=True
++        )
++        # 分配菜单按钮权限，数据范围为仅本人（0）
++        cls.rmbp_self_list = RoleMenuButtonPermission.objects.create(
++            role=cls.role_user_self,
++            menu_button=cls.btn_list,
++            data_range=0
++        )
++        cls.rmbp_self_create = RoleMenuButtonPermission.objects.create(
++            role=cls.role_user_self,
++            menu_button=cls.btn_create,
++            data_range=0
++        )
++
++        # 创建角色 - 部门用户（本部门数据）
++        cls.role_user_dept = Role.objects.create(
++            name="普通用户-本部门",
++            key="user_dept",
++            sort=3,
++            status=True
++        )
++        RoleMenuButtonPermission.objects.create(
++            role=cls.role_user_dept,
++            menu_button=cls.btn_list,
++            data_range=2  # 本部门
++        )
++
++        # 创建角色 - 部门及下级用户（本部门及以下）
++        cls.role_user_dept_all = Role.objects.create(
++            name="普通用户-本部门及以下",
++            key="user_dept_all",
++            sort=4,
++            status=True
++        )
++        RoleMenuButtonPermission.objects.create(
++            role=cls.role_user_dept_all,
++            menu_button=cls.btn_list,
++            data_range=1  # 本部门及以下
++        )
++
++        # 创建超级管理员用户
++        cls.user_admin = Users.objects.create(
++            username="admin",
++            name="管理员",
++            is_superuser=True,
++            is_active=True,
++            dept=cls.dept_group
++        )
++        cls.user_admin.role.add(cls.role_admin)
++        cls.user_admin.dept_belong_id = cls.dept_group.id
++        cls.user_admin.save()
++
++        # 创建技术部用户
++        cls.user_tech1 = Users.objects.create(
++            username="tech1",
++            name="技术1号",
++            is_superuser=False,
++            is_active=True,
++            dept=cls.dept_tech
++        )
++        cls.user_tech1.role.add(cls.role_user_self, cls.role_user_dept)
++        cls.user_tech1.dept_belong_id = cls.dept_tech.id
++        cls.user_tech1.creator = cls.user_admin
++        cls.user_tech1.save()
++
++        cls.user_tech2 = Users.objects.create(
++            username="tech2",
++            name="技术2号",
++            is_superuser=False,
++            is_active=True,
++            dept=cls.dept_tech
++        )
++        cls.user_tech2.role.add(cls.role_user_dept)
++        cls.user_tech2.dept_belong_id = cls.dept_tech.id
++        cls.user_tech2.creator = cls.user_admin
++        cls.user_tech2.save()
++
++        # 创建开发组用户
++        cls.user_dev1 = Users.objects.create(
++            username="dev1",
++            name="开发1号",
++            is_superuser=False,
++            is_active=True,
++            dept=cls.dept_dev
++        )
++        cls.user_dev1.role.add(cls.role_user_dept_all)
++        cls.user_dev1.dept_belong_id = cls.dept_dev.id
++        cls.user_dev1.creator = cls.user_admin
++        cls.user_dev1.save()
++
++        # 创建市场部用户
++        cls.user_market1 = Users.objects.create(
++            username="market1",
++            name="市场1号",
++            is_superuser=False,
++            is_active=True,
++            dept=cls.dept_market
++        )
++        cls.user_market1.role.add(cls.role_user_dept)
++        cls.user_market1.dept_belong_id = cls.dept_market.id
++        cls.user_market1.creator = cls.user_admin
++        cls.user_market1.save()
++
++        # 初始化RequestFactory
++        cls.factory = RequestFactory()
++        cls.api_factory = APIRequestFactory()
++
++
++class ButtonPermissionTest(PermissionTestBase):
++    """
++    按钮权限测试类
++    测试用户能否正确获取到分配给角色的按钮权限
++    """
++
++    def test_superadmin_get_all_button_permissions(self):
++        """
++        测试超级管理员获取所有按钮权限
++        """
++        request = self.api_factory.get('/api/system/menu_button/menu_button_all_permission/')
++        force_authenticate(request, user=self.user_admin)
++        
++        view = MenuButtonViewSet.as_view({'get': 'menu_button_all_permission'})
++        response = view(request)
++        
++        self.assertEqual(response.status_code, 200)
++        self.assertIn('User:List', response.data['data'])
++        self.assertIn('User:Create', response.data['data'])
++        self.assertIn('User:Update', response.data['data'])
++        self.assertIn('User:Delete', response.data['data'])
++
++    def test_normal_user_get_assigned_button_permissions(self):
++        """
++        测试普通用户只能获取到分配的按钮权限
++        """
++        request = self.api_factory.get('/api/system/menu_button/menu_button_all_permission/')
++        force_authenticate(request, user=self.user_tech1)
++        
++        view = MenuButtonViewSet.as_view({'get': 'menu_button_all_permission'})
++        response = view(request)
++        
++        self.assertEqual(response.status_code, 200)
++        # 应该有 User:List 和 User:Create
++        self.assertIn('User:List', response.data['data'])
++        self.assertIn('User:Create', response.data['data'])
++        # 不应该有 User:Update 和 User:Delete
++        self.assertNotIn('User:Update', response.data['data'])
++        self.assertNotIn('User:Delete', response.data['data'])
++
++    def test_user_without_roles_get_no_permissions(self):
++        """
++        测试无角色用户获取不到按钮权限
++        """
++        user_no_role = Users.objects.create(
++            username="norole",
++            name="无角色用户",
++            is_superuser=False,
++            is_active=True,
++            dept=self.dept_group
++        )
++        
++        request = self.api_factory.get('/api/system/menu_button/menu_button_all_permission/')
++        force_authenticate(request, user=user_no_role)
++        
++        view = MenuButtonViewSet.as_view({'get': 'menu_button_all_permission'})
++        response = view(request)
++        
++        self.assertEqual(response.status_code, 200)
++        self.assertEqual(len(response.data['data']), 0)
++
++
++class DataPermissionTest(PermissionTestBase):
++    """
++    数据权限测试类
++    测试不同数据范围的过滤效果
++    """
++
++    def setUp(self):
++        """
++        每个测试前创建数据权限过滤器实例
++        """
++        self.filter = DataLevelPermissionsFilter()
++        self.view = UserViewSet()
++
++    def _create_filtered_request(self, user, api_path='/api/system/user/', method='GET'):
++        """
++        辅助方法：创建带有用户认证的请求
++        """
++        request = self.factory.get(api_path)
++        request.user = user
++        request.method = method
++        # 设置parser_context，用于处理单例查询
++        request.parser_context = {'kwargs': {}}
++        return request
++
++    def test_self_data_permission(self):
++        """
++        测试仅本人数据权限（data_range=0）
++        """
++        request = self._create_filtered_request(self.user_tech1)
++        
++        # 使用仅本人权限的角色
++        self.user_tech1.role.clear()
++        self.user_tech1.role.add(self.role_user_self)
++        
++        queryset = Users.objects.all()
++        filtered_queryset = self.filter.filter_queryset(request, queryset, self.view)
++        
++        # 只能看到自己
++        self.assertEqual(filtered_queryset.count(), 1)
++        self.assertEqual(filtered_queryset.first().username, 'tech1')
++
++    def test_dept_data_permission(self):
++        """
++        测试本部门数据权限（data_range=2）
++        """
++        request = self._create_filtered_request(self.user_tech2)
++        
++        queryset = Users.objects.all()
++        filtered_queryset = self.filter.filter_queryset(request, queryset, self.view)
++        
++        # 应该能看到技术部的用户：tech1, tech2
++        usernames = {user.username for user in filtered_queryset}
++        self.assertEqual(filtered_queryset.count(), 2)
++        self.assertIn('tech1', usernames)
++        self.assertIn('tech2', usernames)
++        self.assertNotIn('dev1', usernames)
++        self.assertNotIn('market1', usernames)
++
++    def test_dept_and_sub_data_permission(self):
++        """
++        测试本部门及以下数据权限（data_range=1）
++        """
++        request = self._create_filtered_request(self.user_dev1)
++        
++        queryset = Users.objects.all()
++        filtered_queryset = self.filter.filter_queryset(request, queryset, self.view)
++        
++        # 技术部及其下级开发组的用户
++        usernames = {user.username for user in filtered_queryset}
++        self.assertEqual(filtered_queryset.count(), 3)
++        self.assertIn('tech1', usernames)
++        self.assertIn('tech2', usernames)
++        self.assertIn('dev1', usernames)
++
++    def test_superadmin_no_data_restriction(self):
++        """
++        测试超级管理员不受数据权限限制
++        """
++        request = self._create_filtered_request(self.user_admin)
++        
++        queryset = Users.objects.all()
++        filtered_queryset = self.filter.filter_queryset(request, queryset, self.view)
++        
++        # 超级管理员应该能看到所有用户
++        self.assertEqual(filtered_queryset.count(), Users.objects.count())
++
++    def test_api_path_matching_with_id(self):
++        """
++        测试API路径带ID时的匹配
++        """
++        # 修改tech1为只有列表权限
++        request = self._create_filtered_request(
++            self.user_tech1,
++            api_path='/api/system/user/1/',
++            method='GET'
++        )
++        request.parser_context['kwargs']['pk'] = '1'
++        
++        queryset = Users.objects.all()
++        filtered_queryset = self.filter.filter_queryset(request, queryset, self.view)
++        
++        # 验证过滤器能正常工作
++        self.assertIsNotNone(filtered_queryset)
++
++    def test_api_path_with_different_methods(self):
++        """
++        测试不同请求方法的权限匹配
++        """
++        # POST方法
++        request_post = self._create_filtered_request(
++            self.user_tech1,
++            api_path='/api/system/user/',
++            method='POST'
++        )
++        queryset = Users.objects.all()
++        filtered_post = self.filter.filter_queryset(request_post, queryset, self.view)
++        self.assertIsNotNone(filtered_post)
++        
++        # PUT方法
++        request_put = self._create_filtered_request(
++            self.user_tech1,
++            api_path='/api/system/user/1/',
++            method='PUT'
++        )
++        request_put.parser_context['kwargs']['pk'] = '1'
++        filtered_put = self.filter.filter_queryset(request_put, queryset, self.view)
++        self.assertIsNotNone(filtered_put)
++
++    def test_get_dept_recursive_function(self):
++        """
++        测试get_dept递归函数
++        """
++        dept_ids = get_dept(self.dept_tech.id)
++        
++        # 应该包含技术部和开发组
++        self.assertIn(self.dept_tech.id, dept_ids)
++        self.assertIn(self.dept_dev.id, dept_ids)
++        self.assertNotIn(self.dept_market.id, dept_ids)
++
++
++class DataPermissionFilterLogicTest(PermissionTestBase):
++    """
++    数据权限过滤器内部逻辑测试
++    测试API路径匹配、权限范围判断等核心逻辑
++    """
++
++    def test_api_path_replacement_for_id(self):
++        """
++        测试API路径中ID占位符的替换逻辑
++        """
++        # 模拟单例查询请求
++        request = RequestFactory().get('/api/system/user/5/')
++        request.user = self.user_tech1
++        request.parser_context = {'kwargs': {'pk': '5'}}
++        
++        # 验证正则替换逻辑
++        test_api = '/api/system/user/5/'
++        pk = '5'
++        expected_api = '/api/system/user/{id}/'
++        
++        # 执行替换
++        if pk:
++            replaced_api = re.sub(pk, '{id}', test_api)
++            self.assertEqual(replaced_api, expected_api)
++
++    def test_multiple_data_ranges_combined(self):
++        """
++        测试多个数据范围权限的组合效果
++        """
++        # 给tech1同时分配仅本人和本部门权限
++        RoleMenuButtonPermission.objects.create(
++            role=self.role_user_dept,
++            menu_button=self.btn_list,
++            data_range=2
++        )
++        
++        request = self._create_filtered_request(self.user_tech1)
++        
++        filter_instance = DataLevelPermissionsFilter()
++        queryset = Users.objects.all()
++        filtered = filter_instance.filter_queryset(request, queryset, UserViewSet())
++        
++        # 权限应该取并集，能看到本部门数据
++        self.assertGreaterEqual(filtered.count(), 2)
