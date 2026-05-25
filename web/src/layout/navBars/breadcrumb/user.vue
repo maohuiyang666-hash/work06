@@ -257,30 +257,38 @@ import { messageCenterStore } from '/@/stores/messageCenter';
 import { getBaseURL } from '/@/utils/baseUrl';
 const messageCenter = messageCenterStore();
 let eventSource: EventSource | null = null; // 存储 EventSource 实例
+let sseReconnectTimer: ReturnType<typeof setTimeout> | null = null; // SSE 重连定时器
 const token = Session.get('token');
 const isConnected = ref(false); // 标志变量，记录是否已连接过
 const getMessageCenterCount = () => {
+	// 连接前先关闭旧连接
+	if (eventSource) {
+		eventSource.close();
+		eventSource = null;
+	}
 	// 创建 EventSource 实例并连接到后端 SSE 端点
 	eventSource = new EventSource(`${getBaseURL()}sse/?token=${token}`); // 替换为你的后端地址
 	// 首次连接成功时打印一次
 	eventSource.onopen = function () {
-		if (!isConnected.value) {
-			console.log('SSE 首次连接成功');
-			isConnected.value = true; // 设置标志为已连接
-		}
+		console.log('SSE 连接成功');
+		isConnected.value = true;
 	};
 	// 监听消息事件
 	eventSource.onmessage = function (event) {
 		console.log(event.data);
-
 		messageCenter.setUnread(+event.data); // 更新总记录数
 	};
 
-	// 错误处理
+	// 错误处理：连接断开时自动重连
 	eventSource.onerror = function (err) {
 		console.error('SSE 错误:', err);
-		if (eventSource !== null && eventSource.readyState === EventSource.CLOSED) {
-			console.log('连接已关闭');
+		if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+			console.log('SSE 连接已关闭，3秒后重连...');
+			// 清除旧定时器，延迟重连
+			if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+			sseReconnectTimer = setTimeout(() => {
+				getMessageCenterCount();
+			}, 3000);
 		}
 	};
 };

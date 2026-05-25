@@ -4,6 +4,10 @@ import {getWsBaseURL} from "/@/utils/baseUrl";
 // @ts-ignore
 import socket from '@/types/api/socket'
 import {useUserInfo} from "/@/stores/userInfo";
+
+// 存储消息回调，确保重连时不丢失
+let _receiveMessage: Function | null = null;
+
 const websocket: socket = {
     websocket: null,
     connectURL: getWsBaseURL(),
@@ -24,6 +28,8 @@ const websocket: socket = {
     // 重连频率
     reconnect_interval: 5 * 1000,
     init: (receiveMessage: Function | null) => {
+        // 存储回调，供重连时复用
+        _receiveMessage = receiveMessage;
         if (!('WebSocket' in window)) {
             message.warning('浏览器不支持WebSocket')
             return null
@@ -36,8 +42,8 @@ const websocket: socket = {
         const wsUrl = `${getWsBaseURL()}ws/${token}/`
         websocket.websocket = new WebSocket(wsUrl)
         websocket.websocket.onmessage = (e: any) => {
-            if (receiveMessage) {
-                receiveMessage(e)
+            if (_receiveMessage) {
+                _receiveMessage(e)
             }
         }
         websocket.websocket.onclose = (e: any) => {
@@ -65,6 +71,8 @@ const websocket: socket = {
             websocket.socket_open = true
             useUserInfo().setWebSocketState(websocket.socket_open);
             websocket.is_reonnect = true
+            // 重置重连计数
+            websocket.reconnect_current = 1
             // 开启心跳
             websocket.heartbeat()
         }
@@ -112,7 +120,7 @@ const websocket: socket = {
         if (websocket.websocket && !websocket.is_reonnect) {
             websocket.close()
         }
-        websocket.init(null)
+        websocket.init(_receiveMessage)
     },
 }
 export default websocket;
