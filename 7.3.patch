@@ -1,0 +1,201 @@
+diff --git a/7.3.patch b/7.3.patch
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/dvadmin/system/tests_rbac.py b/backend/dvadmin/system/tests_rbac.py
+new file mode 100644
+index 0000000..1c6cbff
+--- /dev/null
++++ b/backend/dvadmin/system/tests_rbac.py
+@@ -0,0 +1,192 @@
++import django
++from rest_framework.test import APITestCase
++from rest_framework import status
++from dvadmin.system.models import Users, Role, Dept, Menu, MenuButton, RoleMenuButtonPermission, RoleMenuPermission
++
++class RBACTestCase(APITestCase):
++    def setUp(self):
++        # 1. 部门结构
++        # 顶级部门
++        self.dept_top = Dept.objects.create(name="Top Dept", sort=1)
++        # 子部门1
++        self.dept_sub1 = Dept.objects.create(name="Sub Dept 1", sort=2, parent=self.dept_top)
++        # 子部门2 (子部门1的下级)
++        self.dept_sub2 = Dept.objects.create(name="Sub Dept 2", sort=3, parent=self.dept_sub1)
++        # 别的部门
++        self.dept_other = Dept.objects.create(name="Other Dept", sort=4, parent=self.dept_top)
++
++        # 2. 角色
++        self.super_role = Role.objects.create(name="Super Admin", key="super", sort=1, status=True)
++        self.normal_role = Role.objects.create(name="Normal User", key="normal", sort=2, status=True)
++
++        # 3. 菜单和按钮
++        self.menu = Menu.objects.create(name="Dept Menu", component_name="Dept", web_path="/system/dept", status=True)
++        
++        # 按钮权限
++        self.btn_list = MenuButton.objects.create(menu=self.menu, name="List", value="Dept:Search", api="/api/system/dept/", method=0)
++        self.btn_create = MenuButton.objects.create(menu=self.menu, name="Create", value="Dept:Create", api="/api/system/dept/", method=1)
++        self.btn_update = MenuButton.objects.create(menu=self.menu, name="Update", value="Dept:Update", api="/api/system/dept/{id}/", method=2)
++        
++        # 4. 用户
++        self.super_user = Users.objects.create_user(username="superuser", password="password", is_superuser=True, dept=self.dept_top)
++        self.super_user.role.add(self.super_role)
++
++        self.normal_user = Users.objects.create_user(username="normaluser", password="password", is_superuser=False, dept=self.dept_sub1)
++        self.normal_user.role.add(self.normal_role)
++        self.normal_user.manage_dept.add(self.dept_sub1)
++        self.normal_user.manage_dept.add(self.dept_sub2)
++        
++        # 设置归属和创建人
++        # Top Dept
++        self.dept_top.dept_belong_id = str(self.dept_top.id)
++        self.dept_top.creator = self.super_user
++        self.dept_top.save()
++        # Sub Dept 1
++        self.dept_sub1.dept_belong_id = str(self.dept_sub1.id)
++        self.dept_sub1.creator = self.normal_user
++        self.dept_sub1.save()
++        # Sub Dept 2
++        self.dept_sub2.dept_belong_id = str(self.dept_sub2.id)
++        self.dept_sub2.creator = self.super_user
++        self.dept_sub2.save()
++        # Other Dept
++        self.dept_other.dept_belong_id = str(self.dept_other.id)
++        self.dept_other.creator = self.super_user
++        self.dept_other.save()
++
++    def test_partial_button_permissions(self):
++        """
++        某普通角色拥有页面访问权限，但只拥有部分按钮权限时，接口返回的按钮权限集合符合预期。
++        验证：
++        1. 页面能不能进（有没有抛出403，不过Django如果没加权限类可能就200，但我们要看菜单是否返回）
++        2. 按钮权限列表怎么返回
++        """
++        RoleMenuPermission.objects.create(role=self.normal_role, menu=self.menu)
++        RoleMenuButtonPermission.objects.create(role=self.normal_role, menu_button=self.btn_list, data_range=2)
++        RoleMenuButtonPermission.objects.create(role=self.normal_role, menu_button=self.btn_create, data_range=2)
++        
++        self.client.force_authenticate(user=self.normal_user)
++        response = self.client.get('/api/system/menu_button/menu_button_all_permission/')
++        self.assertEqual(response.status_code, 200)
++        
++        permissions = response.json().get('data', [])
++        # 应该只包含 Search 和 Create
++        self.assertIn("Dept:Search", permissions)
++        self.assertIn("Dept:Create", permissions)
++        self.assertNotIn("Dept:Update", permissions)
++
++    def test_data_scope_only_self(self):
++        """同一个普通角色的数据范围分别设置为“仅本人”时，列表数据过滤结果符合预期"""
++        RoleMenuPermission.objects.create(role=self.normal_role, menu=self.menu)
++        # 0 = 仅本人
++        RoleMenuButtonPermission.objects.create(role=self.normal_role, menu_button=self.btn_list, data_range=0)
++        
++        self.client.force_authenticate(user=self.normal_user)
++        response = self.client.get('/api/system/dept/')
++        self.assertEqual(response.status_code, 200)
++        
++        data = response.json().get('data', [])
++        # 返回的列表可能包含分页信息，如果是分页则取 data['results']
++        if isinstance(data, dict) and 'results' in data:
++            results = data['results']
++        else:
++            results = data
++            
++        # 仅本人且在自己部门：只有 self.dept_sub1 (creator=normal_user, dept_belong_id=sub1.id)
++        ids = [item['id'] for item in results]
++        self.assertIn(self.dept_sub1.id, ids)
++        self.assertNotIn(self.dept_sub2.id, ids)
++        self.assertNotIn(self.dept_top.id, ids)
++        self.assertNotIn(self.dept_other.id, ids)
++
++    def test_data_scope_this_dept(self):
++        """同一个普通角色的数据范围分别设置为“本部门”时，列表数据过滤结果符合预期"""
++        RoleMenuPermission.objects.create(role=self.normal_role, menu=self.menu)
++        # 2 = 本部门
++        RoleMenuButtonPermission.objects.create(role=self.normal_role, menu_button=self.btn_list, data_range=2)
++        
++        self.client.force_authenticate(user=self.normal_user)
++        response = self.client.get('/api/system/dept/')
++        self.assertEqual(response.status_code, 200)
++        
++        data = response.json().get('data', [])
++        if isinstance(data, dict) and 'results' in data:
++            results = data['results']
++        else:
++            results = data
++            
++        ids = [item['id'] for item in results]
++        # 本部门：包括 dept_sub1（因为它属于 normal_user.dept_id）
++        # 并且包括自己创建的（由于 SubFilter 的机制：Q(id__in=dept_list) | Q(creator=u) ）
++        self.assertIn(self.dept_sub1.id, ids)
++        # 不包含子部门 sub2 和 other
++        self.assertNotIn(self.dept_sub2.id, ids)
++        self.assertNotIn(self.dept_other.id, ids)
++
++    def test_data_scope_dept_and_below(self):
++        """同一个普通角色的数据范围分别设置为“本部门及以下”时，列表数据过滤结果符合预期"""
++        RoleMenuPermission.objects.create(role=self.normal_role, menu=self.menu)
++        # 1 = 本部门及以下
++        RoleMenuButtonPermission.objects.create(role=self.normal_role, menu_button=self.btn_list, data_range=1)
++        
++        self.client.force_authenticate(user=self.normal_user)
++        response = self.client.get('/api/system/dept/')
++        self.assertEqual(response.status_code, 200)
++        
++        data = response.json().get('data', [])
++        if isinstance(data, dict) and 'results' in data:
++            results = data['results']
++        else:
++            results = data
++            
++        ids = [item['id'] for item in results]
++        # 本部门及以下：包含 dept_sub1 和 dept_sub2
++        self.assertIn(self.dept_sub1.id, ids)
++        self.assertIn(self.dept_sub2.id, ids)
++        self.assertNotIn(self.dept_other.id, ids)
++        self.assertNotIn(self.dept_top.id, ids)
++
++    def test_super_admin_bypass_data_scope(self):
++        """超级管理员不应受到普通数据权限过滤影响"""
++        self.client.force_authenticate(user=self.super_user)
++        response = self.client.get('/api/system/dept/')
++        self.assertEqual(response.status_code, 200)
++        
++        data = response.json().get('data', [])
++        if isinstance(data, dict) and 'results' in data:
++            results = data['results']
++        else:
++            results = data
++            
++        ids = [item['id'] for item in results]
++        # 超级管理员应能看到所有 4 个部门
++        self.assertEqual(len(ids), 4)
++        self.assertIn(self.dept_top.id, ids)
++        self.assertIn(self.dept_sub1.id, ids)
++        self.assertIn(self.dept_sub2.id, ids)
++        self.assertIn(self.dept_other.id, ids)
++
++    def test_data_scope_api_path_matching(self):
++        """当接口路径和请求方法发生变化时，数据权限匹配逻辑仍然符合当前实现约束。"""
++        # 给普通角色分配 Update 按钮的数据权限（例如本部门）
++        RoleMenuButtonPermission.objects.create(role=self.normal_role, menu_button=self.btn_update, data_range=2)
++        
++        self.client.force_authenticate(user=self.normal_user)
++        
++        # 测试带有 {id} 的路径：PUT /api/system/dept/1/
++        # 因为我们在 DataLevelPermissionsFilter 中有: 
++        # _pk = request.parser_context["kwargs"].get('pk')
++        # if _pk: re_api = re.sub(_pk,'{id}', api)
++        # 这就是对带有路径参数的接口做匹配的逻辑
++        
++        # normal_user 只能修改 dept_sub1（本部门）
++        response = self.client.put(f'/api/system/dept/{self.dept_sub1.id}/', {"name": "Updated Sub Dept 1", "sort": 1})
++        self.assertEqual(response.status_code, 200)
++        
++        # 但是由于 data_range=2 限制了它的范围为本部门，
++        # 所以对于 dept_sub2 的操作会被过滤（如果视图里用 get_queryset().get(...)）
++        # 让我们测试能否获取/更新一个不属于他权限范围的记录
++        response2 = self.client.put(f'/api/system/dept/{self.dept_top.id}/', {"name": "Try update top", "sort": 1})
++        # 因为权限不足，查不到这条数据，应该返回 404
++        self.assertEqual(response2.status_code, 404)
++
