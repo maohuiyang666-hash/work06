@@ -1,3 +1,207 @@
+diff --git a/5.1.patch b/5.1.patch
+new file mode 100644
+index 0000000..728b0e0
+--- /dev/null
++++ b/5.1.patch
+@@ -0,0 +1,198 @@
++diff --git a/web/src/App.vue b/web/src/App.vue
++index 018cc71..bbb3cbe 100644
++--- a/web/src/App.vue
+++++ b/web/src/App.vue
++@@ -86,6 +86,12 @@ onMounted(() => {
++ 		if (Session.get('isTagsViewCurrenFull')) {
++ 			stores.setCurrenFullscreen(Session.get('isTagsViewCurrenFull'));
++ 		}
+++		// 在页面加载时立即初始化 WebSocket 连接
+++		try {
+++			websocket.init(wsReceive)
+++		} catch (e) {
+++			console.log('websocket错误');
+++		}
++ 	});
++ });
++ // 页面销毁时，关闭监听布局配置/i18n监听
++@@ -98,14 +104,6 @@ watch(
++     () => {
++       other.useTitle();
++       other.useFavicon();
++-      if (!websocket.websocket) {
++-        //websockt 模块
++-        try {
++-          websocket.init(wsReceive)
++-        } catch (e) {
++-          console.log('websocket错误');
++-        }
++-      }
++     },
++     {
++       deep: true,
++diff --git a/web/src/layout/navBars/breadcrumb/user.vue b/web/src/layout/navBars/breadcrumb/user.vue
++index 0e3703c..201a7cd 100644
++--- a/web/src/layout/navBars/breadcrumb/user.vue
+++++ b/web/src/layout/navBars/breadcrumb/user.vue
++@@ -254,35 +254,9 @@ onMounted(() => {
++ 
++ //消息中心的未读数量
++ import { messageCenterStore } from '/@/stores/messageCenter';
++-import { getBaseURL } from '/@/utils/baseUrl';
++ const messageCenter = messageCenterStore();
++-let eventSource: EventSource | null = null; // 存储 EventSource 实例
++-const token = Session.get('token');
++-const isConnected = ref(false); // 标志变量，记录是否已连接过
++ const getMessageCenterCount = () => {
++-	// 创建 EventSource 实例并连接到后端 SSE 端点
++-	eventSource = new EventSource(`${getBaseURL()}sse/?token=${token}`); // 替换为你的后端地址
++-	// 首次连接成功时打印一次
++-	eventSource.onopen = function () {
++-		if (!isConnected.value) {
++-			console.log('SSE 首次连接成功');
++-			isConnected.value = true; // 设置标志为已连接
++-		}
++-	};
++-	// 监听消息事件
++-	eventSource.onmessage = function (event) {
++-		console.log(event.data);
++-
++-		messageCenter.setUnread(+event.data); // 更新总记录数
++-	};
++-
++-	// 错误处理
++-	eventSource.onerror = function (err) {
++-		console.error('SSE 错误:', err);
++-		if (eventSource !== null && eventSource.readyState === EventSource.CLOSED) {
++-			console.log('连接已关闭');
++-		}
++-	};
+++	// 不需要 SSE，仅使用 WebSocket 即可
++ };
++ </script>
++ 
++diff --git a/web/src/stores/messageCenter.ts b/web/src/stores/messageCenter.ts
++index ebe1eb1..559bc0f 100644
++--- a/web/src/stores/messageCenter.ts
+++++ b/web/src/stores/messageCenter.ts
++@@ -1,15 +1,17 @@
++ import {defineStore} from "pinia";
+++import { Session } from '/@/utils/storage';
++ /**
++  * 消息中心
++  */
++ export const messageCenterStore = defineStore('messageCenter', {
++     state: () => ({
++         // 未读消息
++-        unread: 0
+++        unread: Session.get('messageUnread') || 0
++     }),
++     actions: {
++-        async setUnread (number:any) {
++-           this.unread = number
+++        async setUnread (number: any) {
+++          this.unread = Number(number) || 0;
+++          Session.set('messageUnread', this.unread);
++         }
++     },
++ });
++diff --git a/web/src/utils/websocket.ts b/web/src/utils/websocket.ts
++index 2fabadb..2a171f8 100644
++--- a/web/src/utils/websocket.ts
+++++ b/web/src/utils/websocket.ts
++@@ -1,9 +1,12 @@
++ import {ElNotification  as message} from 'element-plus'
++-import {Session} from "/@/utils/storage";
++-import {getWsBaseURL} from "/@/utils/baseUrl";
+++import { Session } from "/@/utils/storage";
+++import { getWsBaseURL } from "/@/utils/baseUrl";
++ // @ts-ignore
++ import socket from '@/types/api/socket'
++-import {useUserInfo} from "/@/stores/userInfo";
+++import { useUserInfo } from "/@/stores/userInfo";
+++// 保存 receiveMessage 回调函数，重连时需要
+++let savedReceiveMessage: Function | null = null;
+++
++ const websocket: socket = {
++     websocket: null,
++     connectURL: getWsBaseURL(),
++@@ -24,6 +27,10 @@ const websocket: socket = {
++     // 重连频率
++     reconnect_interval: 5 * 1000,
++     init: (receiveMessage: Function | null) => {
+++        // 保存回调函数，重连时会用到
+++        if (receiveMessage) {
+++            savedReceiveMessage = receiveMessage;
+++        }
++         if (!('WebSocket' in window)) {
++             message.warning('浏览器不支持WebSocket')
++             return null
++@@ -33,16 +40,22 @@ const websocket: socket = {
++             // message.warning('websocket认证失败')
++             return null
++         }
+++        // 如果已有连接，先关闭
+++        if (websocket.websocket) {
+++            websocket.close()
+++        }
++         const wsUrl = `${getWsBaseURL()}ws/${token}/`
++         websocket.websocket = new WebSocket(wsUrl)
++         websocket.websocket.onmessage = (e: any) => {
++-            if (receiveMessage) {
++-                receiveMessage(e)
+++            if (savedReceiveMessage) {
+++                savedReceiveMessage(e)
++             }
++         }
++         websocket.websocket.onclose = (e: any) => {
++             websocket.socket_open = false
++             useUserInfo().setWebSocketState(websocket.socket_open);
+++            // 清除心跳
+++            websocket.hearbeat_timer && clearInterval(websocket.hearbeat_timer)
++             // 需要重新连接
++             if (websocket.is_reonnect) {
++                 websocket.reconnect_timer = setTimeout(() => {
++@@ -65,6 +78,7 @@ const websocket: socket = {
++             websocket.socket_open = true
++             useUserInfo().setWebSocketState(websocket.socket_open);
++             websocket.is_reonnect = true
+++            websocket.reconnect_current = 1
++             // 开启心跳
++             websocket.heartbeat()
++         }
++@@ -83,7 +97,7 @@ const websocket: socket = {
++     },
++     send: (data:string, callback = null) => {
++         // 开启状态直接发送
++-        if (websocket.websocket.readyState === websocket.websocket.OPEN) {
+++        if (websocket.websocket && websocket.websocket.readyState === websocket.websocket.OPEN) {
++             websocket.websocket.send(JSON.stringify(data))
++             // @ts-ignore
++             callback && callback()
++@@ -100,8 +114,12 @@ const websocket: socket = {
++     },
++     close: () => {
++         websocket.is_reonnect = false
++-        websocket.websocket.close()
++-        websocket.websocket = null;
+++        websocket.hearbeat_timer && clearInterval(websocket.hearbeat_timer)
+++        websocket.reconnect_timer && clearTimeout(websocket.reconnect_timer)
+++        if (websocket.websocket) {
+++            websocket.websocket.close()
+++            websocket.websocket = null;
+++        }
++         websocket.socket_open = false
++         useUserInfo().setWebSocketState(websocket.socket_open);
++     },
++@@ -109,9 +127,8 @@ const websocket: socket = {
++      * 重新连接
++      */
++     reconnect: () => {
++-        if (websocket.websocket && !websocket.is_reonnect) {
++-            websocket.close()
++-        }
+++        // 保持 is_reonnect 为 true
+++        websocket.is_reonnect = true
++         websocket.init(null)
++     },
++ }
 diff --git a/web/src/App.vue b/web/src/App.vue
 index 018cc71..bbb3cbe 100644
 --- a/web/src/App.vue
