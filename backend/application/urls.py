@@ -37,10 +37,8 @@ from dvadmin.system.views.login import (
 from dvadmin.system.views.system_config import InitSettingsViewSet
 from dvadmin.utils.swagger import CustomOpenAPISchemaGenerator
 
-# =========== 初始化系统配置 =================
 dispatch.init_system_config()
 dispatch.init_dictionary()
-# =========== 初始化系统配置 =================
 
 permission_classes = [permissions.AllowAny, ] if settings.DEBUG else [permissions.IsAuthenticated, ]
 schema_view = get_schema_view(
@@ -56,7 +54,6 @@ schema_view = get_schema_view(
     permission_classes=permission_classes,
     generator_class=CustomOpenAPISchemaGenerator,
 )
-# 前端页面映射
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
 import mimetypes
@@ -68,21 +65,18 @@ def web_view(request):
 
 
 def serve_web_files(request, filename):
-    # 设定文件路径
     filepath = os.path.join(settings.BASE_DIR, 'templates', 'web', filename)
-
-    # 检查文件是否存在
     if not os.path.exists(filepath):
         raise Http404("File does not exist")
-
-    # 根据文件扩展名，确定 MIME 类型
     mime_type, _ = mimetypes.guess_type(filepath)
-
-    # 打开文件并读取内容
     with open(filepath, 'rb') as f:
         response = HttpResponse(f.read(), content_type=mime_type)
         return response
 
+
+static_document_root = settings.STATIC_ROOT
+if not static_document_root and settings.STATICFILES_DIRS:
+    static_document_root = settings.STATICFILES_DIRS[0]
 
 urlpatterns = (
         [
@@ -112,16 +106,12 @@ urlpatterns = (
             path("api/init/dictionary/", InitDictionaryViewSet.as_view()),
             path("api/init/settings/", InitSettingsViewSet.as_view()),
             path("apiLogin/", ApiLogin.as_view()),
-
-            # 仅用于开发，上线需关闭
             path("api/token/", LoginTokenView.as_view()),
-            # 前端页面映射
             path('web/', web_view, name='web_view'),
             path('web/<path:filename>', serve_web_files, name='serve_web_files'),
-            # sse
             path('sse/', sse_view, name='sse'),
         ]
         + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-        + static(settings.STATIC_URL, document_root=settings.STATIC_URL)
+        + (static(settings.STATIC_URL, document_root=static_document_root) if static_document_root else [])
         + [re_path(ele.get('re_path'), include(ele.get('include'))) for ele in settings.PLUGINS_URL_PATTERNS]
 )

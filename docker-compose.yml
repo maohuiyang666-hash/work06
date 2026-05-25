@@ -7,8 +7,11 @@ services:
     build:
       context: ./
       dockerfile: ./docker_env/web/Dockerfile
+      args:
+        APP_ENV: prod
     environment:
       TZ: Asia/Shanghai
+      APP_ENV: prod
     volumes:
       - ./docker_env/nginx/my.conf:/etc/nginx/conf.d/my.conf
       - ./backend/media:/backend/media
@@ -27,10 +30,29 @@ services:
     working_dir: /backend
     depends_on:
       - dvadmin3-mysql
+      - dvadmin3-redis
     environment:
       PYTHONUNBUFFERED: 1
-      DATABASE_HOST: dvadmin3-mysql
       TZ: Asia/Shanghai
+      APP_ENV: prod
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-django-insecure-change-me}
+      APP_DEBUG: "false"
+      APP_DB_ENGINE: django.db.backends.mysql
+      APP_DB_HOST: dvadmin3-mysql
+      APP_DB_PORT: 3306
+      APP_DB_NAME: django-vue3-admin
+      APP_DB_USER: root
+      APP_DB_PASSWORD: ${MYSQL_PASSWORD}
+      APP_REDIS_HOST: dvadmin3-redis
+      APP_REDIS_PORT: 6379
+      APP_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      APP_REDIS_DB: 0
+      APP_CELERY_BROKER_DB: 3
+      APP_CELERY_RESULT_DB: 4
+      APP_CHANNEL_BACKEND: redis
+      APP_ALLOWED_HOSTS: "*"
+      APP_CORS_ALLOW_ALL: "true"
+      APP_LOGIN_CAPTCHA_ENABLED: "true"
     volumes:
       - ./backend:/backend
       - ./logs/log:/var/log
@@ -67,7 +89,6 @@ services:
       network:
         ipv4_address: 177.10.0.13
 
-
   dvadmin3-celery:
     build:
       context: .
@@ -76,10 +97,29 @@ services:
     working_dir: /backend
     depends_on:
       - dvadmin3-mysql
+      - dvadmin3-redis
     environment:
       PYTHONUNBUFFERED: 1
-      DATABASE_HOST: dvadmin3-mysql
       TZ: Asia/Shanghai
+      APP_ENV: prod
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-django-insecure-change-me}
+      APP_DEBUG: "false"
+      APP_DB_ENGINE: django.db.backends.mysql
+      APP_DB_HOST: dvadmin3-mysql
+      APP_DB_PORT: 3306
+      APP_DB_NAME: django-vue3-admin
+      APP_DB_USER: root
+      APP_DB_PASSWORD: ${MYSQL_PASSWORD}
+      APP_REDIS_HOST: dvadmin3-redis
+      APP_REDIS_PORT: 6379
+      APP_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      APP_REDIS_DB: 0
+      APP_CELERY_BROKER_DB: 3
+      APP_CELERY_RESULT_DB: 4
+      APP_CHANNEL_BACKEND: redis
+      APP_ALLOWED_HOSTS: "*"
+      APP_CORS_ALLOW_ALL: "true"
+      APP_LOGIN_CAPTCHA_ENABLED: "true"
     volumes:
       - ./backend:/backend
       - ./logs/log:/var/log
@@ -88,26 +128,24 @@ services:
       network:
         ipv4_address: 177.10.0.14
 
-
   dvadmin3-redis:
-    image: redis:6.2.6-alpine # 指定服务镜像，最好是与之前下载的redis配置文件保持一致
-    container_name: dvadmin3-redis # 容器名称
+    image: redis:6.2.6-alpine
+    container_name: dvadmin3-redis
     restart: always
     environment:
-      - TZ=Asia/Shanghai # 设置时区
-    volumes: # 配置数据卷
+      - TZ=Asia/Shanghai
+    volumes:
       - ./docker_env/redis/data:/data
       - ./docker_env/redis/redis.conf:/etc/redis/redis.conf
-    ports: # 映射端口
+    ports:
       - "6379:6379"
-    sysctls: # 设置容器中的内核参数
+    sysctls:
       - net.core.somaxconn=1024
-    command: /bin/sh -c "echo 'vm.overcommit_memory = 1' >> /etc/sysctl.conf && redis-server /etc/redis/redis.conf --appendonly yes --requirepass ${REDIS_PASSWORD}" # 指定配置文件并开启持久化
-    privileged: true # 使用该参数，container内的root拥有真正的root权限。否则，container内的root只是外部的一个普通用户权限
+    command: /bin/sh -c "echo 'vm.overcommit_memory = 1' >> /etc/sysctl.conf && redis-server /etc/redis/redis.conf --appendonly yes --requirepass ${REDIS_PASSWORD}"
+    privileged: true
     networks:
       network:
         ipv4_address: 177.10.0.15
-
 
 networks:
   network:
@@ -115,4 +153,3 @@ networks:
       driver: default
       config:
         - subnet: '177.10.0.0/16'
-

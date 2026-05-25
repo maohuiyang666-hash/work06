@@ -5,48 +5,36 @@
 				<img :src="siteLogo" />
 				<div class="login-left-logo-text">
 					<span>{{ getSystemConfig['login.site_title'] || getThemeConfig.globalViceTitle }}</span>
+					<em>{{ envLabel }}</em>
 				</div>
 			</div>
 		</div>
 		<div class="login-right flex z-10">
 			<div class="login-right-warp flex-margin">
-<!--				<span class="login-right-warp-one"></span>-->
-<!--				<span class="login-right-warp-two"></span>-->
 				<div class="login-right-warp-mian">
 					<div class="login-right-warp-main-title">
-            <span>{{getSystemConfig['login.site_name'] || getThemeConfig.globalViceTitleMsg }}</span>
-            <br>
-            <span>{{userInfos.pwd_change_count===0?'初次登录请修改密码':'欢迎登录'}}</span>
-          </div>
+						<span>{{ getSystemConfig['login.site_name'] || getThemeConfig.globalViceTitleMsg }}</span>
+						<br>
+						<span>{{ userInfos.pwd_change_count === 0 ? '初次登录请修改密码' : '欢迎登录' }}</span>
+					</div>
 					<div class="login-right-warp-main-form">
 						<div v-if="!state.isScan">
 							<el-tabs v-model="state.tabsActiveName">
-                <el-tab-pane :label="$t('message.label.changePwd')" name="changePwd"  v-if="userInfos.pwd_change_count===0">
-                  <ChangePwd />
-                </el-tab-pane>
+								<el-tab-pane :label="$t('message.label.changePwd')" name="changePwd" v-if="userInfos.pwd_change_count === 0">
+									<ChangePwd />
+								</el-tab-pane>
 								<el-tab-pane :label="$t('message.label.one1')" name="account" v-else>
 									<Account />
 								</el-tab-pane>
-
-								<!-- TODO 手机号码登录未接入，展示隐藏 -->
 								<el-tab-pane :label="$t('message.label.two2')" name="mobile">
 									<Mobile />
 								</el-tab-pane>
-
-                <el-tab-pane :label="$t('message.label.two3')" name="scan">
+								<el-tab-pane :label="$t('message.label.two3')" name="scan">
 									<scan />
 								</el-tab-pane>
-
-
 							</el-tabs>
 						</div>
-            <OAuth2 />
-
-            <!--						<Scan v-if="state.isScan" />-->
-<!--						<div class="login-content-main-sacn" @click="state.isScan = !state.isScan">-->
-<!--							<i class="iconfont" :class="state.isScan ? 'icon-diannao1' : 'icon-barcode-qr'"></i>-->
-<!--							<div class="login-content-main-sacn-delta"></div>-->
-<!--						</div>-->
+						<OAuth2 />
 					</div>
 				</div>
 			</div>
@@ -55,17 +43,13 @@
 		<div class="login-authorization z-10">
 			<p>Copyright © {{ getSystemConfig['login.copyright'] || '2021-2025 django-vue-admin.com' }} 版权所有</p>
 			<p class="la-other" style="margin-top: 5px;">
-				<a href="https://beian.miit.gov.cn" target="_blank">{{ getSystemConfig['login.keep_record'] ||
-					'晋ICP备18005113号-3' }}</a>
+				<a href="https://beian.miit.gov.cn" target="_blank">{{ getSystemConfig['login.keep_record'] || '晋ICP备18005113号-3' }}</a>
 				|
-				<a :href="getSystemConfig['login.help_url'] ? getSystemConfig['login.help_url'] : '#'"
-					target="_blank">帮助</a>
+				<a :href="getSystemConfig['login.help_url'] ? getSystemConfig['login.help_url'] : '#'" target="_blank">帮助</a>
 				|
-				<a
-					:href="getSystemConfig['login.privacy_url'] ? getBaseURL(getSystemConfig['login.privacy_url']) : '#'">隐私</a>
+				<a :href="getSystemConfig['login.privacy_url'] ? getBaseURL(getSystemConfig['login.privacy_url']) : '#'">隐私</a>
 				|
-				<a
-					:href="getSystemConfig['login.clause_url'] ? getBaseURL(getSystemConfig['login.clause_url']) : '#'">条款</a>
+				<a :href="getSystemConfig['login.clause_url'] ? getBaseURL(getSystemConfig['login.clause_url']) : '#'">条款</a>
 			</p>
 		</div>
 	</div>
@@ -75,27 +59,24 @@
 </template>
 
 <script setup lang="ts" name="loginIndex">
-import {defineAsyncComponent, onMounted, reactive, computed, watch} from 'vue';
+import { defineAsyncComponent, onMounted, reactive, computed, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useThemeConfig } from '/@/stores/themeConfig';
 import { NextLoading } from '/@/utils/loading';
 import logoMini from '/@/assets/logo-mini.svg';
-import loginMain from '/@/assets/login-main.svg';
 import loginBg from '/@/assets/login-bg.png';
-import { SystemConfigStore } from '/@/stores/systemConfig'
-import { getBaseURL } from "/@/utils/baseUrl";
-// 引入组件
+import { SystemConfigStore } from '/@/stores/systemConfig';
+import { getAppEnvLabel, getBaseURL } from '/@/utils/baseUrl';
 const Account = defineAsyncComponent(() => import('/@/views/system/login/component/account.vue'));
 const Mobile = defineAsyncComponent(() => import('/@/views/system/login/component/mobile.vue'));
 const Scan = defineAsyncComponent(() => import('/@/views/system/login/component/scan.vue'));
 const ChangePwd = defineAsyncComponent(() => import('/@/views/system/login/component/changePwd.vue'));
 const OAuth2 = defineAsyncComponent(() => import('/@/views/system/login/component/oauth2.vue'));
 
-import _ from "lodash-es";
-import {useUserInfo} from "/@/stores/userInfo";
+import _ from 'lodash-es';
+import { useUserInfo } from '/@/stores/userInfo';
 const { userInfos } = storeToRefs(useUserInfo());
 
-// 定义变量内容
 const storesThemeConfig = useThemeConfig();
 const { themeConfig } = storeToRefs(storesThemeConfig);
 const state = reactive({
@@ -103,41 +84,39 @@ const state = reactive({
 	isScan: false,
 });
 
+watch(
+	() => userInfos.value.pwd_change_count,
+	(val) => {
+		if (val === 0) {
+			state.tabsActiveName = 'changePwd';
+		} else {
+			state.tabsActiveName = 'account';
+		}
+	},
+	{ deep: true, immediate: true }
+);
 
-watch(()=>userInfos.value.pwd_change_count,(val)=>{
-  if(val===0){
-    state.tabsActiveName ='changePwd'
-  }else{
-    state.tabsActiveName ='account'
-  }
-},{deep:true,immediate:true})
-
-
-// 获取布局配置信息
 const getThemeConfig = computed(() => {
 	return themeConfig.value;
 });
 
-const systemConfigStore = SystemConfigStore()
-const { systemConfig } = storeToRefs(systemConfigStore)
+const systemConfigStore = SystemConfigStore();
+const { systemConfig } = storeToRefs(systemConfigStore);
 const getSystemConfig = computed(() => {
-	return systemConfig.value
-})
+	return systemConfig.value;
+});
 
 const siteLogo = computed(() => {
 	if (!_.isEmpty(getSystemConfig.value['login.site_logo'])) {
-		return getSystemConfig.value['login.site_logo']
+		return getSystemConfig.value['login.site_logo'];
 	}
-	return logoMini
+	return logoMini;
 });
 
-const siteBg = computed(() => {
-	if (!_.isEmpty(getSystemConfig.value['login.login_background'])) {
-		return getSystemConfig.value['login.login_background']
-	}
+const envLabel = computed(() => {
+	return getAppEnvLabel();
 });
 
-// 页面加载时
 onMounted(() => {
 	NextLoading.done();
 });
@@ -171,6 +150,7 @@ onMounted(() => {
 			.login-left-logo-text {
 				display: flex;
 				flex-direction: column;
+				gap: 8px;
 
 				span {
 					margin-left: 10px;
@@ -178,7 +158,16 @@ onMounted(() => {
 					color: var(--el-color-primary);
 				}
 
-
+				em {
+					margin-left: 10px;
+					padding: 2px 10px;
+					width: fit-content;
+					border-radius: 999px;
+					background: rgba(64, 158, 255, 0.12);
+					color: var(--el-color-primary);
+					font-size: 12px;
+					font-style: normal;
+				}
 			}
 		}
 
@@ -208,13 +197,11 @@ onMounted(() => {
 		width: 700px;
 
 		.login-right-warp {
-			//border: 1px solid var(--el-color-primary-light-3);
 			border-radius: 3px;
 			width: 500px;
 			height: 500px;
 			position: relative;
 			overflow: hidden;
-			//background-color: var(--el-color-white);
 
 			.login-right-warp-one,
 			.login-right-warp-two {
@@ -222,120 +209,53 @@ onMounted(() => {
 				display: block;
 				width: inherit;
 				height: inherit;
-
-				&::before,
-				&::after {
-					content: '';
-					position: absolute;
-					z-index: 1;
-				}
+				border: 1px solid var(--el-color-primary-light-3);
+				background: var(--el-color-white);
+				border-radius: 3px;
+				transition: all 0.3s ease;
 			}
 
 			.login-right-warp-one {
-				&::before {
-					filter: hue-rotate(0deg);
-					top: 0px;
-					left: 0;
-					width: 100%;
-					height: 3px;
-					background: linear-gradient(90deg, transparent, var(--el-color-primary));
-					animation: loginLeft 3s linear infinite;
-				}
-
-				&::after {
-					filter: hue-rotate(60deg);
-					top: -100%;
-					right: 2px;
-					width: 3px;
-					height: 100%;
-					background: linear-gradient(180deg, transparent, var(--el-color-primary));
-					animation: loginTop 3s linear infinite;
-					animation-delay: 0.7s;
-				}
+				top: 13px;
+				left: 13px;
+				right: 13px;
+				bottom: 13px;
+				opacity: 0.5;
+				z-index: 1;
 			}
-
 			.login-right-warp-two {
-				&::before {
-					filter: hue-rotate(120deg);
-					bottom: 2px;
-					right: -100%;
-					width: 100%;
-					height: 3px;
-					background: linear-gradient(270deg, transparent, var(--el-color-primary));
-					animation: loginRight 3s linear infinite;
-					animation-delay: 1.4s;
-				}
-
-				&::after {
-					filter: hue-rotate(300deg);
-					bottom: -100%;
-					left: 0px;
-					width: 3px;
-					height: 100%;
-					background: linear-gradient(360deg, transparent, var(--el-color-primary));
-					animation: loginBottom 3s linear infinite;
-					animation-delay: 2.1s;
-				}
+				top: 26px;
+				left: 26px;
+				right: 26px;
+				bottom: 26px;
+				opacity: 0.2;
+				z-index: 0;
 			}
-
 			.login-right-warp-mian {
+				position: absolute;
+				top: 0;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				background: var(--el-color-white);
+				z-index: 2;
+				padding: 50px;
 				display: flex;
 				flex-direction: column;
-				height: 100%;
-
+				justify-content: center;
 
 				.login-right-warp-main-title {
-					height: 130px;
-					font-size: 24px;
-          font-weight: 600;
-					text-align: center;
-					letter-spacing: 3px;
-					animation: logoAnimation 0.3s ease;
-					animation-delay: 0.3s;
-					color: var(--el-text-color-primary);
-				}
+					margin-bottom: 30px;
 
-				.login-right-warp-main-form {
-					flex: 1;
-					padding: 0 50px 50px;
-
-					.login-content-main-sacn {
-						position: absolute;
-						top: 2px;
-						right: 12px;
-						width: 50px;
-						height: 50px;
-						overflow: hidden;
-						cursor: pointer;
-						transition: all ease 0.3s;
-						color: var(--el-color-primary);
-
-						&-delta {
-							position: absolute;
-							width: 35px;
-							height: 70px;
-							z-index: 2;
-							top: 2px;
-							right: 21px;
-							background: var(--el-color-white);
-							transform: rotate(-45deg);
-						}
-
-						&:hover {
-							opacity: 1;
-							transition: all ease 0.3s;
-							color: var(--el-color-primary) !important;
-						}
-
-						i {
-							width: 47px;
-							height: 50px;
-							display: inline-block;
-							font-size: 48px;
-							position: absolute;
-							right: 1px;
-							top: 0px;
-						}
+					span:first-child {
+						font-size: 24px;
+						font-weight: 700;
+						color: var(--el-text-color-primary);
+					}
+					span:last-child {
+						font-size: 14px;
+						color: var(--el-text-color-secondary);
+						line-height: 32px;
 					}
 				}
 			}
@@ -343,21 +263,17 @@ onMounted(() => {
 	}
 
 	.login-authorization {
-		position: absolute;
-		bottom: 30px;
+		position: fixed;
 		left: 0;
 		right: 0;
+		bottom: 18px;
 		text-align: center;
-
-		p {
-			font-size: 12px;
-			color: rgba(0, 0, 0, 0.5);
-		}
-
-		a {
-			color: var(--el-color-primary);
-			margin: 0 5px;
-		}
+		color: var(--el-text-color-secondary);
+		font-size: 12px;
 	}
+}
+
+.loginBg {
+	object-fit: cover;
 }
 </style>

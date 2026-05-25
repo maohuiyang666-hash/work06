@@ -1,79 +1,108 @@
 import { pluginsAll } from '/@/views/plugins/index';
 
-/**
- * @description 校验是否为租户模式。租户模式把域名替换成 域名 加端口
- */
-export const getBaseURL = function (url: null | string = null, isHost: null | boolean = null) {
-	let baseURL = import.meta.env.VITE_API_URL as any;
-	// 如果需要host返回，时，返回地址前缀加http地址
-	if (isHost && !baseURL.startsWith('http')) {
-		baseURL = window.location.protocol + '//' + window.location.host + baseURL
-	}
-	let param = baseURL.split('/')[3] || '';
-	// @ts-ignore
-	if (pluginsAll && pluginsAll.indexOf('dvadmin3-tenants-web') !== -1 && (!param || baseURL.startsWith('/'))) {
-		// 1.把127.0.0.1 替换成和前端一样域名
-		// 2.把 ip 地址替换成和前端一样域名
-		// 3.把 /api 或其他类似的替换成和前端一样域名
-		// document.domain
+const metaEnv = import.meta.env;
 
-		var host = baseURL.split('/')[2];
+const normalizeAppEnv = (value?: string) => {
+	if (value === 'development') {
+		return 'dev';
+	}
+	if (value === 'production') {
+		return 'prod';
+	}
+	return value || 'dev';
+};
+
+const getRawApiBaseURL = () => {
+	return (metaEnv.VITE_APP_API_BASE_URL || metaEnv.VITE_API_URL || '/api') as string;
+};
+
+const getRawWsBaseURL = () => {
+	return (metaEnv.VITE_APP_WS_BASE_URL || '') as string;
+};
+
+const applyTenantBaseURL = (baseURL: string) => {
+	let normalizedBaseURL = baseURL;
+	const param = normalizedBaseURL.split('/')[3] || '';
+	// @ts-ignore
+	if (pluginsAll && pluginsAll.indexOf('dvadmin3-tenants-web') !== -1 && (!param || normalizedBaseURL.startsWith('/'))) {
+		let host = normalizedBaseURL.split('/')[2];
 		if (host) {
-			var port = baseURL.split(':')[2] || 80;
+			const port = Number(normalizedBaseURL.split(':')[2] || 80);
 			if (port === 80 || port === 443) {
 				host = document.domain;
 			} else {
-				host = document.domain + ':' + port;
+				host = `${document.domain}:${port}`;
 			}
-			baseURL = baseURL.split('/')[0] + '//' + baseURL.split('/')[1] + host + '/' + param;
+			normalizedBaseURL = `${normalizedBaseURL.split('/')[0]}//${normalizedBaseURL.split('/')[1]}${host}/${param}`;
 		} else {
-			baseURL = location.protocol + '//' + location.hostname + (location.port ? ':' : '') + location.port + baseURL;
+			normalizedBaseURL = `${location.protocol}//${location.hostname}${location.port ? ':' : ''}${location.port}${normalizedBaseURL}`;
 		}
 	}
-	if (url) {
-		const regex = /^(http|https):\/\//;
-		if (regex.test(url)) {
-			return url
-		} else {
-			// js判断是否是斜杠结尾
-			return baseURL.replace(/\/$/, '') + '/' + url.replace(/^\//, '');
-		}
+	return normalizedBaseURL;
+};
+
+const ensureTrailingSlash = (value: string) => {
+	return value.endsWith('/') ? value : `${value}/`;
+};
+
+export const getAppEnv = () => {
+	return normalizeAppEnv((metaEnv.VITE_APP_ENV || metaEnv.MODE) as string | undefined);
+};
+
+export const getAppEnvLabel = () => {
+	const envLabel = metaEnv.VITE_APP_ENV_LABEL as string | undefined;
+	if (envLabel) {
+		return envLabel;
 	}
+	const appEnv = getAppEnv();
+	if (appEnv === 'test') {
+		return '测试';
+	}
+	if (appEnv === 'prod') {
+		return '生产';
+	}
+	return '开发';
+};
+
+export const getApiBaseURL = () => {
+	let baseURL = applyTenantBaseURL(getRawApiBaseURL());
 	if (!baseURL.endsWith('/')) {
 		baseURL += '/';
 	}
 	return baseURL;
 };
 
-export const getWsBaseURL = function () {
-	let baseURL = import.meta.env.VITE_API_URL as any;
-	let param = baseURL.split('/')[3] || '';
-	// @ts-ignore
-	if (pluginsAll && pluginsAll.indexOf('dvadmin3-tenants-web') !== -1 && (!param || baseURL.startsWith('/'))) {
-		// 1.把127.0.0.1 替换成和前端一样域名
-		// 2.把 ip 地址替换成和前端一样域名
-		// 3.把 /api 或其他类似的替换成和前端一样域名
-		// document.domain
-		var host = baseURL.split('/')[2];
-		if (host) {
-			var port = baseURL.split(':')[2] || 80;
-			if (port === 80 || port === 443) {
-				host = document.domain;
-			} else {
-				host = document.domain + ':' + port;
-			}
-			baseURL = baseURL.split('/')[0] + '//' + baseURL.split('/')[1] + host + '/' + param;
-		} else {
-			baseURL = location.protocol + '//' + location.hostname + (location.port ? ':' : '') + location.port + baseURL;
+export const getBaseURL = function (url: null | string = null, isHost: null | boolean = null) {
+	let baseURL = getApiBaseURL();
+	if (isHost && !baseURL.startsWith('http')) {
+		baseURL = `${window.location.protocol}//${window.location.host}${baseURL}`;
+	}
+	if (url) {
+		const regex = /^(http|https):\/\//;
+		if (regex.test(url)) {
+			return url;
 		}
-	} else if (param !== '' || baseURL.startsWith('/')) {
-		baseURL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.hostname + (location.port ? ':' : '') + location.port + baseURL;
+		return baseURL.replace(/\/$/, '') + '/' + url.replace(/^\//, '');
 	}
-	if (!baseURL.endsWith('/')) {
-		baseURL += '/';
+	return baseURL;
+};
+
+export const getWsBaseURL = function () {
+	const explicitWsBaseURL = getRawWsBaseURL();
+	if (explicitWsBaseURL) {
+		let wsBaseURL = ensureTrailingSlash(applyTenantBaseURL(explicitWsBaseURL));
+		if (wsBaseURL.startsWith('http')) {
+			wsBaseURL = wsBaseURL.replace('http', 'ws');
+		}
+		return wsBaseURL;
 	}
+	let baseURL = applyTenantBaseURL(getRawApiBaseURL());
+	const param = baseURL.split('/')[3] || '';
+	if (param !== '' || baseURL.startsWith('/')) {
+		baseURL = `${location.protocol === 'https:' ? 'wss://' : 'ws://'}${location.hostname}${location.port ? ':' : ''}${location.port}${baseURL}`;
+	}
+	baseURL = ensureTrailingSlash(baseURL);
 	if (baseURL.startsWith('http')) {
-		// https 也默认会被替换成 wss
 		baseURL = baseURL.replace('http', 'ws');
 	}
 	return baseURL;

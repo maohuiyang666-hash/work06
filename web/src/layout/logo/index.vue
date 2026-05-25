@@ -1,7 +1,10 @@
 <template>
 	<div class="layout-logo" v-if="setShowLogo" @click="onThemeConfigChange">
 		<img :src="siteLogo" class="layout-logo-medium-img" />
-		<span style="font-size: x-large; ">{{ getSystemConfig['login.site_title'] || themeConfig.globalTitle }}</span>
+		<div class="layout-logo-content">
+			<span class="layout-logo-title">{{ getSystemConfig['login.site_title'] || themeConfig.globalTitle }}</span>
+			<span class="layout-logo-env">{{ appEnvLabel }}</span>
+		</div>
 	</div>
 	<div class="layout-logo-size" v-else @click="onThemeConfigChange">
 		<img :src="siteLogo" class="layout-logo-size-img" />
@@ -13,36 +16,39 @@ import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useThemeConfig } from '/@/stores/themeConfig';
 import logoMini from '/@/assets/logo-mini.svg';
-import { SystemConfigStore } from "/@/stores/systemConfig";
-import _ from "lodash-es";
-// 定义变量内容
+import { SystemConfigStore } from '/@/stores/systemConfig';
+import _ from 'lodash-es';
+import { getAppEnvLabel } from '/@/utils/baseUrl';
+
 const storesThemeConfig = useThemeConfig();
 const { themeConfig } = storeToRefs(storesThemeConfig);
 
-// 设置 logo 的显示。classic 经典布局默认显示 logo
 const setShowLogo = computed(() => {
 	let { isCollapse, layout } = themeConfig.value;
 	return !isCollapse || layout === 'classic' || document.body.clientWidth < 1000;
 });
-// logo 点击实现菜单展开/收起
+
 const onThemeConfigChange = () => {
 	if (themeConfig.value.layout === 'transverse') return false;
 	themeConfig.value.isCollapse = !themeConfig.value.isCollapse;
 };
 
-const systemConfigStore = SystemConfigStore()
-const { systemConfig } = storeToRefs(systemConfigStore)
+const systemConfigStore = SystemConfigStore();
+const { systemConfig } = storeToRefs(systemConfigStore);
 const getSystemConfig = computed(() => {
-	return systemConfig.value
-})
+	return systemConfig.value;
+});
 
 const siteLogo = computed(() => {
 	if (!_.isEmpty(getSystemConfig.value['login.site_logo'])) {
-		return getSystemConfig.value['login.site_logo']
+		return getSystemConfig.value['login.site_logo'];
 	}
-	return logoMini
+	return logoMini;
 });
 
+const appEnvLabel = computed(() => {
+	return getAppEnvLabel();
+});
 </script>
 
 <style scoped lang="scss">
@@ -58,13 +64,31 @@ const siteLogo = computed(() => {
 	cursor: pointer;
 	animation: logoAnimation 0.3s ease-in-out;
 
-	span {
+	&-content {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+
+	&-title {
+		font-size: x-large;
 		white-space: nowrap;
 		display: inline-block;
 	}
 
+	&-env {
+		flex-shrink: 0;
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: var(--el-color-primary-light-8);
+		color: var(--el-color-primary);
+		font-size: 12px;
+		line-height: 18px;
+	}
+
 	&:hover {
-		span {
+		.layout-logo-title {
 			color: var(--color-primary-light-2);
 		}
 	}

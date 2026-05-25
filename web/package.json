@@ -6,6 +6,8 @@
 	"scripts": {
 		"dev": "vite --force",
 		"build:dev": "vite build --mode development",
+		"build:test": "vite build --mode test",
+		"build:prod": "vite build --mode production",
 		"build": "vite build",
 		"build:local": "vite build --mode local_prod",
 		"lint-fix": "eslint --fix --ext .js --ext .jsx --ext .vue src/",
