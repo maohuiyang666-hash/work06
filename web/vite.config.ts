@@ -35,6 +35,16 @@ const viteConfig = defineConfig((mode: ConfigEnv) => {
 			open: false,
 			hmr: true,
 			proxy: {
+				'/api': {
+					target: env.VITE_API_URL,
+					changeOrigin: true,
+					rewrite: (path) => path.replace(/^\/api/, '/api'),
+				},
+				'/ws': {
+					target: env.VITE_API_URL,
+					ws: true,
+					changeOrigin: true,
+				},
 				'/gitee': {
 					target: 'https://gitee.com',
 					ws: true,
@@ -65,6 +75,7 @@ const viteConfig = defineConfig((mode: ConfigEnv) => {
 			__VUE_I18N_FULL_INSTALL__: JSON.stringify(false),
 			__INTLIFY_PROD_DEVTOOLS__: JSON.stringify(false),
 			__VERSION__: JSON.stringify(process.env.npm_package_version),
+			'import.meta.env.VITE_APP_ENV': JSON.stringify(env.VITE_APP_ENV || mode.mode),
 		},
 	};
 });

@@ -46,6 +46,21 @@ export const getBaseURL = function (url: null | string = null, isHost: null | bo
 };
 
 export const getWsBaseURL = function () {
+	// 优先使用配置的 WebSocket 地址
+	const wsURL = import.meta.env.VITE_WS_URL;
+	if (wsURL) {
+		let wsBaseURL = wsURL;
+		// 如果是相对路径，补全为完整 URL
+		if (!wsBaseURL.startsWith('ws://') && !wsBaseURL.startsWith('wss://')) {
+			wsBaseURL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.hostname + (location.port ? ':' : '') + location.port + wsBaseURL;
+		}
+		if (!wsBaseURL.endsWith('/')) {
+			wsBaseURL += '/';
+		}
+		return wsBaseURL;
+	}
+
+	// 兼容旧逻辑：从 VITE_API_URL 推导 WebSocket 地址
 	let baseURL = import.meta.env.VITE_API_URL as any;
 	let param = baseURL.split('/')[3] || '';
 	// @ts-ignore

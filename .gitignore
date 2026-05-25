@@ -7,3 +7,7 @@
 web/package-lock.json
 
 *.bat
+
+# 环境变量配置（敏感信息）
+backend/.env
+backend/conf/env.py

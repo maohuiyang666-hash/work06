@@ -40,11 +40,15 @@ sys.path.insert(0, os.path.join(PLUGINS_PATH))
 ]
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = locals().get("DEBUG", True)
+# 优先使用 env 配置文件中定义的 DEBUG，其次根据 DJANGO_ENV 判断
+DEBUG = locals().get("DEBUG", locals().get("DJANGO_ENV", 'dev') == 'dev')
 ALLOWED_HOSTS = locals().get("ALLOWED_HOSTS", ["*"])
 
 # 列权限需要排除的App应用
 COLUMN_EXCLUDE_APPS = ['channels', 'captcha'] + locals().get("COLUMN_EXCLUDE_APPS", [])
+
+# 当前运行环境标识（供其他模块使用）
+DJANGO_ENV = locals().get("DJANGO_ENV", 'dev')
 
 INSTALLED_APPS = [
     "django.contrib.auth",

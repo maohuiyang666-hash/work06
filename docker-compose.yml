@@ -31,6 +31,12 @@ services:
       PYTHONUNBUFFERED: 1
       DATABASE_HOST: dvadmin3-mysql
       TZ: Asia/Shanghai
+      DJANGO_ENV: ${DJANGO_ENV:-prod}
+      DATABASE_NAME: ${DATABASE_NAME:-django-vue3-admin}
+      DATABASE_USER: ${DATABASE_USER:-root}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-DVADMIN3}
+      REDIS_HOST: dvadmin3-redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-DVADMIN3}
     volumes:
       - ./backend:/backend
       - ./logs/log:/var/log
@@ -76,10 +82,17 @@ services:
     working_dir: /backend
     depends_on:
       - dvadmin3-mysql
+      - dvadmin3-redis
     environment:
       PYTHONUNBUFFERED: 1
       DATABASE_HOST: dvadmin3-mysql
       TZ: Asia/Shanghai
+      DJANGO_ENV: ${DJANGO_ENV:-prod}
+      DATABASE_NAME: ${DATABASE_NAME:-django-vue3-admin}
+      DATABASE_USER: ${DATABASE_USER:-root}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-DVADMIN3}
+      REDIS_HOST: dvadmin3-redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-DVADMIN3}
     volumes:
       - ./backend:/backend
       - ./logs/log:/var/log

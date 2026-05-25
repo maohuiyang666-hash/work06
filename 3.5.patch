@@ -1,0 +1,273 @@
+diff --git a/.gitignore b/.gitignore
+index 12bc2b3..0175651 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -6,4 +6,8 @@
+ .vscode/
+ web/package-lock.json
+ 
+-*.bat
+\ No newline at end of file
++*.bat
++
++# 环境变量配置（敏感信息）
++backend/.env
++backend/conf/env.py
+\ No newline at end of file
+diff --git a/backend/application/settings.py b/backend/application/settings.py
+index 71ed7d5..0bdcc20 100644
+--- a/backend/application/settings.py
++++ b/backend/application/settings.py
+@@ -40,12 +40,16 @@ sys.path.insert(0, os.path.join(PLUGINS_PATH))
+ ]
+ 
+ # SECURITY WARNING: don't run with debug turned on in production!
+-DEBUG = locals().get("DEBUG", True)
++# 优先使用 env 配置文件中定义的 DEBUG，其次根据 DJANGO_ENV 判断
++DEBUG = locals().get("DEBUG", locals().get("DJANGO_ENV", 'dev') == 'dev')
+ ALLOWED_HOSTS = locals().get("ALLOWED_HOSTS", ["*"])
+ 
+ # 列权限需要排除的App应用
+ COLUMN_EXCLUDE_APPS = ['channels', 'captcha'] + locals().get("COLUMN_EXCLUDE_APPS", [])
+ 
++# 当前运行环境标识（供其他模块使用）
++DJANGO_ENV = locals().get("DJANGO_ENV", 'dev')
++
+ INSTALLED_APPS = [
+     "django.contrib.auth",
+     "django.contrib.contenttypes",
+diff --git a/backend/conf/env.example.py b/backend/conf/env.example.py
+index 3d1db25..6dc275c 100644
+--- a/backend/conf/env.example.py
++++ b/backend/conf/env.example.py
+@@ -1,50 +1,12 @@
+-import os
+-
+-from application.settings import BASE_DIR
+-
+-# ================================================= #
+-# *************** mysql数据库 配置  *************** #
+-# ================================================= #
+-# 数据库 ENGINE ，默认演示使用 sqlite3 数据库，正式环境建议使用 mysql 数据库
+-# sqlite3 设置
+-# DATABASE_ENGINE = "django.db.backends.sqlite3"
+-# DATABASE_NAME = os.path.join(BASE_DIR, "db.sqlite3")
+-
+-# 使用mysql时，改为此配置
+-DATABASE_ENGINE = "django.db.backends.mysql"
+-DATABASE_NAME = 'django-vue3-admin' # mysql 时使用
+-
+-# 数据库地址 改为自己数据库地址
+-DATABASE_HOST = '127.0.0.1'
+-# # 数据库端口
+-DATABASE_PORT = 3306
+-# # 数据库用户名
+-DATABASE_USER = "root"
+-# # 数据库密码
+-DATABASE_PASSWORD = 'DVADMIN3'
+-
+-# 表前缀
+-TABLE_PREFIX = "dvadmin_"
+-# ================================================= #
+-# ******** redis配置，无redis 可不进行配置  ******** #
+-# ================================================= #
+-REDIS_DB = 1
+-CELERY_BROKER_DB = 3
+-REDIS_PASSWORD = 'DVADMIN3'
+-REDIS_HOST = '127.0.0.1'
+-REDIS_URL = f'redis://:{REDIS_PASSWORD or ""}@{REDIS_HOST}:6379'
+-# ================================================= #
+-# ****************** 功能 启停  ******************* #
+-# ================================================= #
+-DEBUG = True
+-# 启动登录详细概略获取(通过调用api获取ip详细地址。如果是内网，关闭即可)
+-ENABLE_LOGIN_ANALYSIS_LOG = True
+-# 登录接口 /api/token/ 是否需要验证码认证，用于测试，正式环境建议取消
+-LOGIN_NO_CAPTCHA_AUTH = True
+-# ================================================= #
+-# ****************** 其他 配置  ******************* #
+-# ================================================= #
+-
+-ALLOWED_HOSTS = ["*"]
+-# 列权限中排除App应用
+-COLUMN_EXCLUDE_APPS = []
++"""
++环境配置示例文件
++注意: 本项目已采用多环境配置体系，请根据实际需要创建对应的环境配置文件:
++  - conf/env_dev.py   (开发环境, DJANGO_ENV=dev, 默认)
++  - conf/env_test.py  (测试环境, DJANGO_ENV=test)
++  - conf/env_prod.py  (生产环境, DJANGO_ENV=prod)
++
++不要直接修改此文件，请复制为对应的 env_{环境}.py 后修改。
++环境变量优先级: 系统环境变量 > 环境配置文件中的值
++
++完整配置项说明请参考各环境配置文件。
++"""
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 8fd739f..3dc969f 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -31,6 +31,12 @@ services:
+       PYTHONUNBUFFERED: 1
+       DATABASE_HOST: dvadmin3-mysql
+       TZ: Asia/Shanghai
++      DJANGO_ENV: ${DJANGO_ENV:-prod}
++      DATABASE_NAME: ${DATABASE_NAME:-django-vue3-admin}
++      DATABASE_USER: ${DATABASE_USER:-root}
++      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-DVADMIN3}
++      REDIS_HOST: dvadmin3-redis
++      REDIS_PASSWORD: ${REDIS_PASSWORD:-DVADMIN3}
+     volumes:
+       - ./backend:/backend
+       - ./logs/log:/var/log
+@@ -76,10 +82,17 @@ services:
+     working_dir: /backend
+     depends_on:
+       - dvadmin3-mysql
++      - dvadmin3-redis
+     environment:
+       PYTHONUNBUFFERED: 1
+       DATABASE_HOST: dvadmin3-mysql
+       TZ: Asia/Shanghai
++      DJANGO_ENV: ${DJANGO_ENV:-prod}
++      DATABASE_NAME: ${DATABASE_NAME:-django-vue3-admin}
++      DATABASE_USER: ${DATABASE_USER:-root}
++      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-DVADMIN3}
++      REDIS_HOST: dvadmin3-redis
++      REDIS_PASSWORD: ${REDIS_PASSWORD:-DVADMIN3}
+     volumes:
+       - ./backend:/backend
+       - ./logs/log:/var/log
+diff --git a/web/.env.development b/web/.env.development
+index fc47d19..f64b0d0 100644
+--- a/web/.env.development
++++ b/web/.env.development
+@@ -1,10 +1,13 @@
+-# 本地环境
++# 开发环境
+ ENV = 'development'
+ VITE_PORT = 8080
+ VITE_API_URL = 'http://127.0.0.1:8000'
++VITE_WS_URL = 'ws://127.0.0.1:8000/ws'
+ # open 运行 npm run dev 时自动打开浏览器
+ VITE_OPEN = false
+ 
+-
+ # 是否启用按钮权限
+ VITE_PM_ENABLED = true
++
++# 构建模式标识
++VITE_APP_ENV = 'dev'
+diff --git a/web/.env.local_prod b/web/.env.local_prod
+index dad4103..bcad55a 100644
+--- a/web/.env.local_prod
++++ b/web/.env.local_prod
+@@ -1,11 +1,15 @@
+-# 线上环境
++# 本地生产模拟环境
+ ENV = 'local_prod'
+ 
+ # 线上环境接口地址
+ VITE_API_URL = '/'
++VITE_WS_URL = '/ws'
+ 
+ # 是否启用按钮权限
+ VITE_PM_ENABLED = true
+ VITE_PUBLIC_PATH = /web/
+ # dist目录
+-VITE_DIST_PATH =../backend/templates/web/
+\ No newline at end of file
++VITE_DIST_PATH =../backend/templates/web/
++
++# 构建模式标识
++VITE_APP_ENV = 'local_prod'
+\ No newline at end of file
+diff --git a/web/.env.production b/web/.env.production
+index 998aa5e..a7e70ca 100644
+--- a/web/.env.production
++++ b/web/.env.production
+@@ -1,8 +1,12 @@
+-# 线上环境
++# 生产环境
+ ENV = 'production'
+ 
+ # 线上环境接口地址
+ VITE_API_URL = '/api' # docker-compose部署不需要修改，nginx容器自动代理了这个地址
++VITE_WS_URL = '/ws'
+ 
+ # 是否启用按钮权限
+ VITE_PM_ENABLED = true
++
++# 构建模式标识
++VITE_APP_ENV = 'prod'
+diff --git a/web/package.json b/web/package.json
+index 113381b..8e8e8c9 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -5,8 +5,10 @@
+ 	"license": "MIT",
+ 	"scripts": {
+ 		"dev": "vite --force",
++		"dev:test": "vite --mode test --force",
+ 		"build:dev": "vite build --mode development",
+-		"build": "vite build",
++		"build:test": "vite build --mode test",
++		"build": "vite build --mode production",
+ 		"build:local": "vite build --mode local_prod",
+ 		"lint-fix": "eslint --fix --ext .js --ext .jsx --ext .vue src/",
+ 		"build:flowH5": "vite build --config flowH5.config.ts"
+diff --git a/web/src/utils/baseUrl.ts b/web/src/utils/baseUrl.ts
+index 6b55c27..d414e9b 100644
+--- a/web/src/utils/baseUrl.ts
++++ b/web/src/utils/baseUrl.ts
+@@ -46,6 +46,21 @@ export const getBaseURL = function (url: null | string = null, isHost: null | bo
+ };
+ 
+ export const getWsBaseURL = function () {
++	// 优先使用配置的 WebSocket 地址
++	const wsURL = import.meta.env.VITE_WS_URL;
++	if (wsURL) {
++		let wsBaseURL = wsURL;
++		// 如果是相对路径，补全为完整 URL
++		if (!wsBaseURL.startsWith('ws://') && !wsBaseURL.startsWith('wss://')) {
++			wsBaseURL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.hostname + (location.port ? ':' : '') + location.port + wsBaseURL;
++		}
++		if (!wsBaseURL.endsWith('/')) {
++			wsBaseURL += '/';
++		}
++		return wsBaseURL;
++	}
++
++	// 兼容旧逻辑：从 VITE_API_URL 推导 WebSocket 地址
+ 	let baseURL = import.meta.env.VITE_API_URL as any;
+ 	let param = baseURL.split('/')[3] || '';
+ 	// @ts-ignore
+diff --git a/web/vite.config.ts b/web/vite.config.ts
+index 2681338..5076664 100644
+--- a/web/vite.config.ts
++++ b/web/vite.config.ts
+@@ -35,6 +35,16 @@ const viteConfig = defineConfig((mode: ConfigEnv) => {
+ 			open: false,
+ 			hmr: true,
+ 			proxy: {
++				'/api': {
++					target: env.VITE_API_URL,
++					changeOrigin: true,
++					rewrite: (path) => path.replace(/^\/api/, '/api'),
++				},
++				'/ws': {
++					target: env.VITE_API_URL,
++					ws: true,
++					changeOrigin: true,
++				},
+ 				'/gitee': {
+ 					target: 'https://gitee.com',
+ 					ws: true,
+@@ -65,6 +75,7 @@ const viteConfig = defineConfig((mode: ConfigEnv) => {
+ 			__VUE_I18N_FULL_INSTALL__: JSON.stringify(false),
+ 			__INTLIFY_PROD_DEVTOOLS__: JSON.stringify(false),
+ 			__VERSION__: JSON.stringify(process.env.npm_package_version),
++			'import.meta.env.VITE_APP_ENV': JSON.stringify(env.VITE_APP_ENV || mode.mode),
+ 		},
+ 	};
+ });
