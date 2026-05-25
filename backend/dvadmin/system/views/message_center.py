@@ -217,8 +217,8 @@ class MessageCenterViewSet(CustomModelViewSet):
         """
         pk = kwargs.get('pk')
         user_id = self.request.user.id
-        queryset = MessageCenterTargetUser.objects.filter(users__id=user_id, messagecenter__id=pk).first()
-        if queryset:
+        querysets = MessageCenterTargetUser.objects.filter(users__id=user_id, messagecenter__id=pk)
+        for queryset in querysets:
             queryset.is_read = True
             queryset.save()
         instance = self.get_object()

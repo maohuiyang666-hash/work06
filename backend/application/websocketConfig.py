@@ -161,6 +161,8 @@ def create_message_push(title: str, content: str, target_type: int = 0, target_u
         users = Users.objects.filter(dept__id__in=target_dept).values_list('id', flat=True)
     if target_type in [3]:  # 系统通知
         users = Users.objects.values_list('id', flat=True)
+        
+    users = list(set(users))
     targetuser_data = []
     for user in users:
         targetuser_data.append({

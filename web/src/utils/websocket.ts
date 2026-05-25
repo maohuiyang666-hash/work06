@@ -23,7 +23,11 @@ const websocket: socket = {
     reconnect_timer: null,
     // 重连频率
     reconnect_interval: 5 * 1000,
+    receiveMessage: null,
     init: (receiveMessage: Function | null) => {
+        if (receiveMessage !== null) {
+            websocket.receiveMessage = receiveMessage;
+        }
         if (!('WebSocket' in window)) {
             message.warning('浏览器不支持WebSocket')
             return null
@@ -33,11 +37,16 @@ const websocket: socket = {
             // message.warning('websocket认证失败')
             return null
         }
+        
+        if (websocket.websocket) {
+            websocket.websocket.close()
+        }
+        
         const wsUrl = `${getWsBaseURL()}ws/${token}/`
         websocket.websocket = new WebSocket(wsUrl)
         websocket.websocket.onmessage = (e: any) => {
-            if (receiveMessage) {
-                receiveMessage(e)
+            if (websocket.receiveMessage) {
+                websocket.receiveMessage(e)
             }
         }
         websocket.websocket.onclose = (e: any) => {

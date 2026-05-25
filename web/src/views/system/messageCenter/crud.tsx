@@ -63,10 +63,10 @@ export default function ({ crudExpose, context }: CreateCrudOptionsProps): Creat
 						type: 'text',
 						iconRight: 'View',
 						show: auth('messageCenter:Search'),
-						click({ index, row }) {
+						async click({ index, row }) {
 							crudExpose.openView({ index, row });
 							if (tabActivted.value === 'receive') {
-								viewRequest({ row });
+								await viewRequest({ row });
 								crudExpose.doRefresh();
 							}
 						},

@@ -1,0 +1,95 @@
+diff --git a/backend/application/websocketConfig.py b/backend/application/websocketConfig.py
+index 6c390f8..831782e 100644
+--- a/backend/application/websocketConfig.py
++++ b/backend/application/websocketConfig.py
+@@ -161,6 +161,8 @@ def create_message_push(title: str, content: str, target_type: int = 0, target_u
+         users = Users.objects.filter(dept__id__in=target_dept).values_list('id', flat=True)
+     if target_type in [3]:  # 系统通知
+         users = Users.objects.values_list('id', flat=True)
++        
++    users = list(set(users))
+     targetuser_data = []
+     for user in users:
+         targetuser_data.append({
+diff --git a/backend/dvadmin/system/views/message_center.py b/backend/dvadmin/system/views/message_center.py
+index 52c065f..62e2c94 100644
+--- a/backend/dvadmin/system/views/message_center.py
++++ b/backend/dvadmin/system/views/message_center.py
+@@ -217,8 +217,8 @@ class MessageCenterViewSet(CustomModelViewSet):
+         """
+         pk = kwargs.get('pk')
+         user_id = self.request.user.id
+-        queryset = MessageCenterTargetUser.objects.filter(users__id=user_id, messagecenter__id=pk).first()
+-        if queryset:
++        querysets = MessageCenterTargetUser.objects.filter(users__id=user_id, messagecenter__id=pk)
++        for queryset in querysets:
+             queryset.is_read = True
+             queryset.save()
+         instance = self.get_object()
+diff --git a/web/src/App.vue b/web/src/App.vue
+index 018cc71..395bff3 100644
+--- a/web/src/App.vue
++++ b/web/src/App.vue
+@@ -118,7 +118,9 @@ const wsReceive = (message: any) => {
+   const data = JSON.parse(message.data);
+   const { unread } = data;
+   const messageCenter = messageCenterStore();
+-  messageCenter.setUnread(unread);
++  if (unread !== undefined) {
++    messageCenter.setUnread(unread);
++  }
+   if (data.contentType === 'SYSTEM') {
+     ElNotification({
+       title: '系统消息',
+diff --git a/web/src/utils/websocket.ts b/web/src/utils/websocket.ts
+index 2fabadb..285e66f 100644
+--- a/web/src/utils/websocket.ts
++++ b/web/src/utils/websocket.ts
+@@ -23,7 +23,11 @@ const websocket: socket = {
+     reconnect_timer: null,
+     // 重连频率
+     reconnect_interval: 5 * 1000,
++    receiveMessage: null,
+     init: (receiveMessage: Function | null) => {
++        if (receiveMessage !== null) {
++            websocket.receiveMessage = receiveMessage;
++        }
+         if (!('WebSocket' in window)) {
+             message.warning('浏览器不支持WebSocket')
+             return null
+@@ -33,11 +37,16 @@ const websocket: socket = {
+             // message.warning('websocket认证失败')
+             return null
+         }
++        
++        if (websocket.websocket) {
++            websocket.websocket.close()
++        }
++        
+         const wsUrl = `${getWsBaseURL()}ws/${token}/`
+         websocket.websocket = new WebSocket(wsUrl)
+         websocket.websocket.onmessage = (e: any) => {
+-            if (receiveMessage) {
+-                receiveMessage(e)
++            if (websocket.receiveMessage) {
++                websocket.receiveMessage(e)
+             }
+         }
+         websocket.websocket.onclose = (e: any) => {
+diff --git a/web/src/views/system/messageCenter/crud.tsx b/web/src/views/system/messageCenter/crud.tsx
+index 2e59037..5f7a796 100644
+--- a/web/src/views/system/messageCenter/crud.tsx
++++ b/web/src/views/system/messageCenter/crud.tsx
+@@ -63,10 +63,10 @@ export default function ({ crudExpose, context }: CreateCrudOptionsProps): Creat
+ 						type: 'text',
+ 						iconRight: 'View',
+ 						show: auth('messageCenter:Search'),
+-						click({ index, row }) {
++						async click({ index, row }) {
+ 							crudExpose.openView({ index, row });
+ 							if (tabActivted.value === 'receive') {
+-								viewRequest({ row });
++								await viewRequest({ row });
+ 								crudExpose.doRefresh();
+ 							}
+ 						},

@@ -118,7 +118,9 @@ const wsReceive = (message: any) => {
   const data = JSON.parse(message.data);
   const { unread } = data;
   const messageCenter = messageCenterStore();
-  messageCenter.setUnread(unread);
+  if (unread !== undefined) {
+    messageCenter.setUnread(unread);
+  }
   if (data.contentType === 'SYSTEM') {
     ElNotification({
       title: '系统消息',
