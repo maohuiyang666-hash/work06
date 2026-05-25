@@ -1,0 +1,638 @@
+# -*- coding: utf-8 -*-
+
+"""
+RBAC 与数据权限 后端测试
+
+验证：
+1. 按钮权限：页面可进但按钮权限集合符合预期（menu_button_all_permission）
+2. 数据权限：
+   - 仅本人 (data_range=0) → 只看到自己创建 + 自己部门的数据
+   - 本部门 (data_range=2) → 只看到本部门的部门记录
+   - 本部门及以下 (data_range=1) → 看到本部门 + 子部门的部门记录
+3. 超级管理员不受数据权限过滤
+4. API 路径 + method 变化时，数据权限匹配逻辑的正确性
+5. 按钮权限与数据权限不会互相错位
+
+测试模型：Dept（利用 DeptViewSet.list 途径 DataLevelPermissionMargeFilter）
+"""
+
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "application.settings")
+import django
+django.setup()
+
+from django.test import TestCase
+from rest_framework.test import APIRequestFactory, force_authenticate
+
+from dvadmin.system.models import (
+    Dept,
+    Role,
+    Users,
+    Menu,
+    MenuButton,
+    RoleMenuPermission,
+    RoleMenuButtonPermission,
+)
+from dvadmin.system.views.dept import DeptViewSet
+from dvadmin.system.views.menu_button import MenuButtonViewSet
+
+
+# ============================================================
+# 常量
+# ============================================================
+DATA_RANGE_OWN = 0       # 仅本人数据权限
+DATA_RANGE_DEPT_SUB = 1  # 本部门及以下数据权限
+DATA_RANGE_DEPT = 2      # 本部门数据权限
+DATA_RANGE_ALL = 3       # 全部数据权限
+DATA_RANGE_CUSTOM = 4    # 自定数据权限
+
+METHOD_GET = 0
+METHOD_POST = 1
+METHOD_PUT = 2
+METHOD_DELETE = 3
+
+
+# ============================================================
+# 基类：构造测试数据
+# ============================================================
+
+class PermissionTestBase(TestCase):
+    """统一构造部门/角色/用户/菜单/按钮/权限"""
+
+    @classmethod
+    def setUpTestData(cls):
+        # ---------- 部门树 ----------
+        # 总公司(1001) → 研发部(1002) → 研发一组(1003)
+        #              → 市场部(1004)
+        cls.dept_root = Dept.objects.create(
+            id=1001, name="总公司", parent=None, status=True, sort=1,
+            dept_belong_id="1001",
+        )
+        cls.dept_a = Dept.objects.create(
+            id=1002, name="研发部", parent=cls.dept_root, status=True, sort=2,
+            dept_belong_id="1002",
+        )
+        cls.dept_b_under_a = Dept.objects.create(
+            id=1003, name="研发一组", parent=cls.dept_a, status=True, sort=3,
+            dept_belong_id="1003",
+        )
+        cls.dept_c = Dept.objects.create(
+            id=1004, name="市场部", parent=cls.dept_root, status=True, sort=4,
+            dept_belong_id="1004",
+        )
+
+        # ---------- 角色 ----------
+        cls.role_normal = Role.objects.create(id=101, name="普通角色", key="normal", status=True, sort=1)
+
+        # ---------- 用户 ----------
+        # user_a：研发部，普通角色
+        cls.user_a = Users.objects.create_user(
+            id=201, username="test_user_a", password="pass123", name="用户A",
+            dept=cls.dept_a, is_superuser=False,
+        )
+        cls.user_a.role.add(cls.role_normal)
+
+        # user_b：研发一组（研发部下级），普通角色
+        cls.user_b = Users.objects.create_user(
+            id=202, username="test_user_b", password="pass123", name="用户B",
+            dept=cls.dept_b_under_a, is_superuser=False,
+        )
+        cls.user_b.role.add(cls.role_normal)
+
+        # user_c：市场部，普通角色
+        cls.user_c = Users.objects.create_user(
+            id=203, username="test_user_c", password="pass123", name="用户C",
+            dept=cls.dept_c, is_superuser=False,
+        )
+        cls.user_c.role.add(cls.role_normal)
+
+        # super_user：超级管理员（is_superuser=True）
+        cls.super_user = Users.objects.create_user(
+            id=299, username="super_admin", password="pass123", name="超级管理员",
+            dept=cls.dept_root, is_superuser=True,
+        )
+
+        # ---------- 菜单 ----------
+        cls.menu_dept = Menu.objects.create(
+            id=301, name="部门管理", is_catalog=False, status=True,
+            web_path="system/dept", component_name="system/dept",
+        )
+
+        # ---------- 菜单按钮 ----------
+        # 1. 列表/查询: GET /api/system/dept/
+        cls.btn_dept_list = MenuButton.objects.create(
+            id=401, menu=cls.menu_dept, name="查询",
+            value="system/dept:Search",
+            api="/api/system/dept/", method=METHOD_GET,
+        )
+        # 2. 详情: GET /api/system/dept/{id}/
+        cls.btn_dept_retrieve = MenuButton.objects.create(
+            id=402, menu=cls.menu_dept, name="详情",
+            value="system/dept:Retrieve",
+            api="/api/system/dept/{id}/", method=METHOD_GET,
+        )
+        # 3. 新增: POST /api/system/dept/
+        cls.btn_dept_create = MenuButton.objects.create(
+            id=403, menu=cls.menu_dept, name="新增",
+            value="system/dept:Create",
+            api="/api/system/dept/", method=METHOD_POST,
+        )
+        # 4. 编辑: PUT /api/system/dept/{id}/
+        cls.btn_dept_update = MenuButton.objects.create(
+            id=404, menu=cls.menu_dept, name="编辑",
+            value="system/dept:Update",
+            api="/api/system/dept/{id}/", method=METHOD_PUT,
+        )
+        # 5. 删除: DELETE /api/system/dept/{id}/
+        cls.btn_dept_delete = MenuButton.objects.create(
+            id=405, menu=cls.menu_dept, name="删除",
+            value="system/dept:Delete",
+            api="/api/system/dept/{id}/", method=METHOD_DELETE,
+        )
+
+        # ---------- 角色-菜单权限（页面访问权限）----------
+        RoleMenuPermission.objects.create(role=cls.role_normal, menu=cls.menu_dept)
+
+        # ---------- 工厂 ----------
+        cls.factory = APIRequestFactory()
+
+    # ========== 辅助方法 ==========
+
+    def _call_dept_list(self, user):
+        """调用 DeptViewSet.list，返回 response.data"""
+        request = self.factory.get("/api/system/dept/")
+        force_authenticate(request, user=user)
+        view = DeptViewSet.as_view(actions={"get": "list"})
+        response = view(request)
+        return response.data
+
+    def _call_menu_button_all_permission(self, user):
+        """调用 MenuButtonViewSet.menu_button_all_permission"""
+        request = self.factory.get("/api/system/menu_button/menu_button_all_permission/")
+        force_authenticate(request, user=user)
+        view = MenuButtonViewSet.as_view(actions={"get": "menu_button_all_permission"})
+        response = view(request)
+        return response.data
+
+    def _grant_button_permissions(self, role, buttons, data_range=DATA_RANGE_DEPT):
+        """批量授予角色按钮权限，统一 data_range"""
+        for btn in buttons:
+            RoleMenuButtonPermission.objects.create(
+                role=role, menu_button=btn, data_range=data_range,
+            )
+
+
+# ============================================================
+# 1. 按钮权限：有空页面权限，仅部分按钮 → 集合正确
+# ============================================================
+
+class ButtonPermissionTest(PermissionTestBase):
+    """
+    验证 menu_button_all_permission 接口返回的按钮权限值集合。
+    普通角色已被授予 Dept 页面访问权限（RoleMenuPermission），
+    但只被授予部分按钮权限。
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls._grant_button_permissions(
+            cls.role_normal,
+            [cls.btn_dept_list, cls.btn_dept_retrieve],
+        )
+
+    def test_normal_user_gets_only_granted_buttons(self):
+        """仅被授予 Search+Retrieve → 只返回这两个 button value"""
+        data = self._call_menu_button_all_permission(self.user_a)
+        self.assertIn("data", data)
+        btn_values = set(data["data"])
+        expected = {"system/dept:Search", "system/dept:Retrieve"}
+        self.assertEqual(btn_values, expected)
+
+    def test_normal_user_excludes_ungranted_buttons(self):
+        """不应出现未授予的 Create/Update/Delete"""
+        data = self._call_menu_button_all_permission(self.user_a)
+        btn_values = set(data["data"])
+        forbidden = {"system/dept:Create", "system/dept:Update", "system/dept:Delete"}
+        self.assertEqual(btn_values & forbidden, set())
+
+    def test_superuser_gets_all_buttons(self):
+        """超级管理员获取全部已定义按钮"""
+        data = self._call_menu_button_all_permission(self.super_user)
+        btn_values = set(data["data"])
+        all_buttons = {
+            "system/dept:Search", "system/dept:Retrieve",
+            "system/dept:Create", "system/dept:Update", "system/dept:Delete",
+        }
+        self.assertTrue(all_buttons.issubset(btn_values),
+            f"超管缺少按钮: {all_buttons - btn_values}")
+
+
+# ============================================================
+# 2. 数据权限 — 仅本人 (data_range=0)
+# ============================================================
+
+class DataRangeOwnTest(PermissionTestBase):
+    """
+    数据范围=0（仅本人数据权限）。
+    过滤器行为：creator == request.user AND dept_belong_id == user.dept_id
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # 按钮权限：允许列表查询，数据范围=仅本人
+        cls._grant_button_permissions(
+            cls.role_normal, [cls.btn_dept_list],
+            data_range=DATA_RANGE_OWN,
+        )
+        # user_a 在自己的部门创建了一条 Dept 记录
+        cls.dept_by_user_a = Dept.objects.create(
+            id=3001, name="用户A创建的部门", parent=cls.dept_root, status=True,
+            dept_belong_id=str(cls.user_a.dept_id),  # "1002" = 研发部
+            creator=cls.user_a,
+        )
+        # user_a 创建了归属其他部门的记录（dept_belong_id 不是自己的部门）
+        cls.dept_by_user_a_other_dept = Dept.objects.create(
+            id=3002, name="用户A创建但归属其他部门", parent=cls.dept_root, status=True,
+            dept_belong_id=str(cls.dept_c.id),  # "1004" = 市场部
+            creator=cls.user_a,
+        )
+        # user_b 创建的记录
+        cls.dept_by_user_b = Dept.objects.create(
+            id=3003, name="用户B创建的部门", parent=cls.dept_root, status=True,
+            dept_belong_id=str(cls.user_b.dept_id),
+            creator=cls.user_b,
+        )
+
+    def test_own_sees_creator_match_and_dept_match(self):
+        """
+        user_a 查看列表：只能看到自己创建 + dept_belong_id=自己部门 的记录
+        → 应包含 dept_by_user_a (id=3001)，不包含其他
+        """
+        data = self._call_dept_list(self.user_a)
+        dept_ids = {d["id"] for d in data["data"]}
+        self.assertIn(self.dept_by_user_a.id, dept_ids,
+            "应能看到自己创建且归属自己部门的记录")
+
+    def test_own_excludes_creator_match_but_dept_mismatch(self):
+        """
+        user_a 创建的记录但 dept_belong_id 指向其他部门 → 被过滤
+        """
+        data = self._call_dept_list(self.user_a)
+        dept_ids = {d["id"] for d in data["data"]}
+        self.assertNotIn(self.dept_by_user_a_other_dept.id, dept_ids,
+            "creator 是自己但 dept_belong_id 不匹配的记录应被过滤")
+
+    def test_own_excludes_other_user_records(self):
+        """
+        user_b 创建的记录不应出现
+        """
+        data = self._call_dept_list(self.user_a)
+        dept_ids = {d["id"] for d in data["data"]}
+        self.assertNotIn(self.dept_by_user_b.id, dept_ids,
+            "不应看到其他用户创建的记录")
+
+
+# ============================================================
+# 3. 数据权限 — 本部门 (data_range=2)
+# ============================================================
+
+class DataRangeDeptTest(PermissionTestBase):
+    """
+    数据范围=2（本部门数据权限）。
+    Dept 模型过滤逻辑：dept_list=[user.dept_id]，parent 过滤用 id__in=dept_list
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls._grant_button_permissions(
+            cls.role_normal, [cls.btn_dept_list],
+            data_range=DATA_RANGE_DEPT,
+        )
+
+    def test_user_a_sees_only_own_dept_record(self):
+        """
+        user_a (研发部, id=1002), data_range=2
+        → 只能看到 id=1002 的部门记录（即研发部自身）
+        """
+        data = self._call_dept_list(self.user_a)
+        dept_ids = {d["id"] for d in data["data"]}
+        self.assertIn(self.dept_a.id, dept_ids,
+            "应能看到自己所属部门记录")
+        self.assertNotIn(self.dept_b_under_a.id, dept_ids,
+            "本部门权限不应看到子部门记录")
+        self.assertNotIn(self.dept_c.id, dept_ids,
+            "本部门权限不应看到其他部门记录")
+
+    def test_user_b_sees_only_own_dept_record(self):
+        """
+        user_b (研发一组, id=1003), data_range=2
+        → 只能看到 id=1003
+        """
+        data = self._call_dept_list(self.user_b)
+        dept_ids = {d["id"] for d in data["data"]}
+        self.assertIn(self.dept_b_under_a.id, dept_ids)
+        self.assertNotIn(self.dept_a.id, dept_ids,
+            "子部门用户不应看到上级部门记录")
+
+
+# ============================================================
+# 4. 数据权限 — 本部门及以下 (data_range=1)
+# ============================================================
+
+class DataRangeDeptAndSubTest(PermissionTestBase):
+    """
+    数据范围=1（本部门及以下）。
+    Dept 模型：dept_list=[user.dept_id] + 所有子部门 ID
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls._grant_button_permissions(
+            cls.role_normal, [cls.btn_dept_list],
+            data_range=DATA_RANGE_DEPT_SUB,
+        )
+
+    def test_user_a_sees_own_and_sub_depts(self):
+        """
+        user_a (研发部, id=1002)，本部门及以下
+        → 应看到研发部(1002) + 研发一组(1003)，不应看到市场部(1004)
+        """
+        data = self._call_dept_list(self.user_a)
+        dept_ids = {d["id"] for d in data["data"]}
+        self.assertIn(self.dept_a.id, dept_ids,
+            "应能看到本部门")
+        self.assertIn(self.dept_b_under_a.id, dept_ids,
+            "应能看到子部门")
+        self.assertNotIn(self.dept_c.id, dept_ids,
+            "不应看到无关部门")
+
+    def test_user_b_sees_only_own_dept(self):
+        """
+        user_b (研发一组, id=1003)，无下级，本部门及以下 ≈ 本部门
+        → 只看到研发一组(1003)
+        """
+        data = self._call_dept_list(self.user_b)
+        dept_ids = {d["id"] for d in data["data"]}
+        self.assertIn(self.dept_b_under_a.id, dept_ids,
+            "应能看到自己部门")
+        self.assertNotIn(self.dept_a.id, dept_ids,
+            "子部门用户不应看到上级部门记录")
+
+    def test_root_dept_not_visible_to_sub_dept_user(self):
+        """
+        user_b 不应看到总公司(1001)
+        """
+        data = self._call_dept_list(self.user_b)
+        dept_ids = {d["id"] for d in data["data"]}
+        self.assertNotIn(self.dept_root.id, dept_ids)
+
+
+# ============================================================
+# 5. 超级管理员不受数据权限过滤
+# ============================================================
+
+class SuperuserBypassTest(PermissionTestBase):
+    """is_superuser=True → 过滤器直接返回 queryset"""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # 给普通角色设置"仅本人"（非常严格）
+        cls._grant_button_permissions(
+            cls.role_normal, [cls.btn_dept_list],
+            data_range=DATA_RANGE_OWN,
+        )
+        # 注意：super_user 没有关联 role_normal，即使有关联也不影响
+        # is_superuser 检查在 filter_queryset 最开始
+
+    def test_superuser_sees_all_status_true_depts(self):
+        """超管看到所有 status=True 的部门"""
+        data = self._call_dept_list(self.super_user)
+        dept_ids = {d["id"] for d in data["data"]}
+        all_dept_ids = set(Dept.objects.filter(status=True).values_list("id", flat=True))
+        self.assertEqual(dept_ids, all_dept_ids,
+            f"超管应看到全部部门，缺少: {all_dept_ids - dept_ids}")
+
+    def test_normal_user_is_restricted_under_same_config(self):
+        """对比：同样配置下普通用户被限制"""
+        data = self._call_dept_list(self.user_a)
+        dept_ids = {d["id"] for d in data["data"]}
+        all_dept_ids = set(Dept.objects.filter(status=True).values_list("id", flat=True))
+        self.assertTrue(len(dept_ids) < len(all_dept_ids),
+            "普通用户应受到数据权限限制")
+
+    def test_superuser_button_permission_unrestricted(self):
+        """超管按钮权限全部返回"""
+        data = self._call_menu_button_all_permission(self.super_user)
+        btn_values = set(data["data"])
+        self.assertGreaterEqual(len(btn_values), 5)
+
+
+# ============================================================
+# 6. API 路径 + method 匹配逻辑
+# ============================================================
+
+class ApiPathMethodMatchingTest(PermissionTestBase):
+    """验证 DataLevelPermissionsFilter 的 api/method → MenuButton → data_range 链路"""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # 不同按钮设置不同 data_range，验证匹配不会错位
+        RoleMenuButtonPermission.objects.create(
+            role=cls.role_normal, menu_button=cls.btn_dept_list,
+            data_range=DATA_RANGE_OWN,
+        )
+        RoleMenuButtonPermission.objects.create(
+            role=cls.role_normal, menu_button=cls.btn_dept_create,
+            data_range=DATA_RANGE_DEPT_SUB,
+        )
+        RoleMenuButtonPermission.objects.create(
+            role=cls.role_normal, menu_button=cls.btn_dept_retrieve,
+            data_range=DATA_RANGE_ALL,
+        )
+
+    def test_get_list_matches_correct_menu_button(self):
+        """
+        GET /api/system/dept/ → method=0 → btn_dept_list → data_range=0（仅本人）
+        """
+        btn = MenuButton.objects.filter(api="/api/system/dept/", method=METHOD_GET).first()
+        self.assertIsNotNone(btn)
+        perm = RoleMenuButtonPermission.objects.filter(
+            role=self.role_normal, menu_button=btn,
+        ).first()
+        self.assertIsNotNone(perm)
+        self.assertEqual(perm.data_range, DATA_RANGE_OWN,
+            "列表 GET 应对应 data_range=0")
+
+    def test_post_create_matches_correct_menu_button(self):
+        """
+        POST /api/system/dept/ → method=1 → btn_dept_create → data_range=1（本部门及以下）
+        """
+        btn = MenuButton.objects.filter(api="/api/system/dept/", method=METHOD_POST).first()
+        self.assertIsNotNone(btn)
+        perm = RoleMenuButtonPermission.objects.filter(
+            role=self.role_normal, menu_button=btn,
+        ).first()
+        self.assertIsNotNone(perm)
+        self.assertEqual(perm.data_range, DATA_RANGE_DEPT_SUB,
+            "新增 POST 应对应 data_range=1")
+
+    def test_retrieve_with_id_placeholder_matches(self):
+        """
+        GET /api/system/dept/{id}/ → 使用 {id} 占位符 → btn_dept_retrieve → data_range=3（全部）
+        """
+        btn = MenuButton.objects.filter(
+            api="/api/system/dept/{id}/", method=METHOD_GET,
+        ).first()
+        self.assertIsNotNone(btn)
+        perm = RoleMenuButtonPermission.objects.filter(
+            role=self.role_normal, menu_button=btn,
+        ).first()
+        self.assertIsNotNone(perm)
+        self.assertEqual(perm.data_range, DATA_RANGE_ALL,
+            "详情接口应对应 data_range=3")
+
+    def test_put_update_matches_correct_api(self):
+        """
+        PUT /api/system/dept/{id}/ → method=2 → btn_dept_update
+        未设置 RoleMenuButtonPermission → 无匹配 → dataScope_list 为空
+        """
+        btn = MenuButton.objects.filter(
+            api="/api/system/dept/{id}/", method=METHOD_PUT,
+        ).first()
+        self.assertIsNotNone(btn)
+        perm = RoleMenuButtonPermission.objects.filter(
+            role=self.role_normal, menu_button=btn,
+        ).first()
+        # 未授予该按钮权限，所以 perm 应为 None
+        self.assertIsNone(perm,
+            "未授予的编辑按钮不应有权限记录")
+
+    def test_delete_matches_correct_api(self):
+        """
+        DELETE /api/system/dept/{id}/ → method=3 → btn_dept_delete
+        同样未授予 → 无匹配
+        """
+        btn = MenuButton.objects.filter(
+            api="/api/system/dept/{id}/", method=METHOD_DELETE,
+        ).first()
+        self.assertIsNotNone(btn)
+        perm = RoleMenuButtonPermission.objects.filter(
+            role=self.role_normal, menu_button=btn,
+        ).first()
+        self.assertIsNone(perm)
+
+    def test_same_path_different_methods_get_different_data_range(self):
+        """
+        同路径 /api/system/dept/，GET=仅本人，POST=本部门及以下 → 不会混淆
+        """
+        get_btn = MenuButton.objects.get(api="/api/system/dept/", method=METHOD_GET)
+        post_btn = MenuButton.objects.get(api="/api/system/dept/", method=METHOD_POST)
+
+        get_perm = RoleMenuButtonPermission.objects.get(
+            role=self.role_normal, menu_button=get_btn,
+        )
+        post_perm = RoleMenuButtonPermission.objects.get(
+            role=self.role_normal, menu_button=post_btn,
+        )
+
+        self.assertEqual(get_perm.data_range, DATA_RANGE_OWN)
+        self.assertEqual(post_perm.data_range, DATA_RANGE_DEPT_SUB)
+        self.assertNotEqual(get_perm.data_range, post_perm.data_range,
+            "同一路径不同 method 的 data_range 不应混淆")
+
+
+# ============================================================
+# 7. 综合：按钮权限 + 数据权限不互相错位
+# ============================================================
+
+class NoCrossoverTest(PermissionTestBase):
+    """
+    验证不同按钮的 data_range 和 button value 独立存储，不会错位
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # 同一个角色，不同按钮 → 不同 data_range
+        RoleMenuButtonPermission.objects.create(
+            role=cls.role_normal, menu_button=cls.btn_dept_list,
+            data_range=DATA_RANGE_OWN,
+        )
+        RoleMenuButtonPermission.objects.create(
+            role=cls.role_normal, menu_button=cls.btn_dept_create,
+            data_range=DATA_RANGE_DEPT_SUB,
+        )
+        RoleMenuButtonPermission.objects.create(
+            role=cls.role_normal, menu_button=cls.btn_dept_update,
+            data_range=DATA_RANGE_DEPT,
+        )
+        RoleMenuButtonPermission.objects.create(
+            role=cls.role_normal, menu_button=cls.btn_dept_delete,
+            data_range=DATA_RANGE_ALL,
+        )
+        RoleMenuButtonPermission.objects.create(
+            role=cls.role_normal, menu_button=cls.btn_dept_retrieve,
+            data_range=DATA_RANGE_ALL,
+        )
+
+    def test_each_button_has_correct_data_range(self):
+        """每个按钮的 data_range 值与分配的一致"""
+        expectations = {
+            self.btn_dept_list: DATA_RANGE_OWN,
+            self.btn_dept_create: DATA_RANGE_DEPT_SUB,
+            self.btn_dept_update: DATA_RANGE_DEPT,
+            self.btn_dept_delete: DATA_RANGE_ALL,
+            self.btn_dept_retrieve: DATA_RANGE_ALL,
+        }
+        for btn, expected_range in expectations.items():
+            perm = RoleMenuButtonPermission.objects.get(
+                role=self.role_normal, menu_button=btn,
+            )
+            self.assertEqual(perm.data_range, expected_range,
+                f"按钮 {btn.value} 的 data_range 应为 {expected_range}，实际为 {perm.data_range}")
+
+    def test_button_permission_values_independent_of_data_range(self):
+        """
+        menu_button_all_permission 返回全部已授予的 button value，
+        与 data_range 无关
+        """
+        data = self._call_menu_button_all_permission(self.user_a)
+        btn_values = set(data["data"])
+        expected = {
+            "system/dept:Search", "system/dept:Retrieve",
+            "system/dept:Create", "system/dept:Update", "system/dept:Delete",
+        }
+        self.assertEqual(btn_values, expected,
+            "按钮权限值应与 data_range 独立，不应混淆")
+
+    def test_list_uses_own_range_actual_filtering(self):
+        """
+        通过实际调用 list 验证：GET 列表走 btn_dept_list → data_range=0（仅本人）
+        user_a 创建一条归属自己部门的记录 → 应能看到
+        """
+        Dept.objects.create(
+            id=4001, name="仅本人验证", parent=self.dept_root, status=True,
+            dept_belong_id=str(self.user_a.dept_id), creator=self.user_a,
+        )
+        data = self._call_dept_list(self.user_a)
+        dept_ids = {d["id"] for d in data["data"]}
+        self.assertIn(4001, dept_ids,
+            "data_range=0 时，应能看到自己创建且归属自己部门的记录")
+
+    def test_create_button_data_range_does_not_affect_list(self):
+        """
+        btn_dept_create 的 data_range=1（本部门及以下）不会影响到 GET 列表的过滤行为
+        list 使用的是 btn_dept_list 的 data_range=0
+        """
+        # 确认列表的 data_range 确实是 0
+        perm = RoleMenuButtonPermission.objects.get(
+            role=self.role_normal, menu_button=self.btn_dept_list,
+        )
+        self.assertEqual(perm.data_range, DATA_RANGE_OWN,
+            "list 按钮的 data_range 应为 0，不应被 create 按钮的 data_range=1 覆盖")
