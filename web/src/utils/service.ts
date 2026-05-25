@@ -83,7 +83,7 @@ function createService() {
 						ElMessageBox.alert(dataAxios.msg, '提示', {
 							confirmButtonText: 'OK',
 							callback: (action: Action) => {
-								// window.location.reload();
+								window.location.reload();
 							},
 						});
 						errorCreate(`${dataAxios.msg}: ${response.config.url}`);

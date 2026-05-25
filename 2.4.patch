@@ -1,0 +1,13 @@
+diff --git a/web/src/utils/service.ts b/web/src/utils/service.ts
+index 0080f78..91e3970 100644
+--- a/web/src/utils/service.ts
++++ b/web/src/utils/service.ts
+@@ -83,7 +83,7 @@ function createService() {
+ 						ElMessageBox.alert(dataAxios.msg, '提示', {
+ 							confirmButtonText: 'OK',
+ 							callback: (action: Action) => {
+-								// window.location.reload();
++								window.location.reload();
+ 							},
+ 						});
+ 						errorCreate(`${dataAxios.msg}: ${response.config.url}`);
